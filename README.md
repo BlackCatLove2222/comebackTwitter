@@ -45,7 +45,7 @@
 
 - 作者: **ネコセンパイ**（[BlackCatLove2222](https://github.com/BlackCatLove2222)）
 - 共作: **ミスティ**
-- 上流プロジェクト: [crimera/piko-newx](https://github.com/crimera/piko-newx)（パッチ本体。GPL-3.0 — [LICENSE](LICENSE) / [NOTICE](NOTICE) 参照）、[Morphe](https://morphe.software)（パッチャー基盤。ReVanced の系譜）
+- 上流プロジェクト: [crimera/piko-newx](https://github.com/crimera/piko-newx)（パッチ本体。ライセンス条件は上流リポジトリを確認してください）、[Morphe](https://morphe.software)（パッチャー基盤。ReVanced の系譜）
 
 アプリ内の Piko バージョン表示には「Piko %s · ミスティ」のクレジットが入ります。
 
@@ -55,4 +55,4 @@
 
 **comebackTwitter** is a Japanese customization set for [Piko NewX](https://github.com/crimera/piko-newx) (X 12.41.0-prod.01) that brings the client as close as possible to the circa-2020 Twitter experience: full Japanese localization of the patch UI, Twitter-era terminology (ツイート/リツイート), 2020-baseline default settings, removal of modern clutter (the home "add tab" tile, header Grok/search icons, the own-profile Share button, the "Made on X" and "Created with Grok" labels — photo user-tags are kept), the classic pull-to-refresh sounds, and a faithful recreation of the classic Material pull-to-refresh spinner (white badge, saturating descent, fixed hold position, ~1.3 s stretch-spin cycle, pull-phase arrowhead).
 
-This repository distributes **only our own work** — the modified patch bundle, translations, helper source code, and documentation. It does **not** contain any patched APK, any part of the X app, sound files, or signing keys. Obtain your own copy of X 12.41.0-prod.01 and patch it yourself with [Morphe](https://morphe.software). See [BUILD.md](BUILD.md) for the full procedure and [SPEC.md](SPEC.md) for the maintained specification. Unofficial fan work; not affiliated with X Corp. Author: ネコセンパイ (BlackCatLove2222), co-author: ミスティ. Upstream patches are GPL-3.0 (see LICENSE / NOTICE).
+This repository distributes **only our own work** — the modified patch bundle, translations, helper source code, and documentation. It does **not** contain any patched APK, any part of the X app, sound files, or signing keys. Obtain your own copy of X 12.41.0-prod.01 and patch it yourself with [Morphe](https://morphe.software). See [BUILD.md](BUILD.md) for the full procedure and [SPEC.md](SPEC.md) for the maintained specification. Unofficial fan work; not affiliated with X Corp. Author: ネコセンパイ (BlackCatLove2222), co-author: ミスティ. Based on crimera/piko-newx; refer to the upstream repository for its terms.
