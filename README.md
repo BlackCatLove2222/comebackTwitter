@@ -14,6 +14,8 @@
 - **プロフィールタブは4つだけ**: ツイート / 返信 / メディア / いいね
 - **除去した要素**: ホームの「追加」タイル、プロフィールヘッダーの Grok・検索アイコン、自分プロフィールの「共有」ボタン、「Made on X（{logo}で作成）」ラベル、「Grokで作成」ラベル
   - ※ 写真のユーザータグ付けは**残しています**（同じ位置に出ますが別物です）
+- **テーマと外観**: ダークは2色 — ダークブルー（Dim、背景 #15202B）と、完全な黒（#000）の「ブラック」（本体の Lights Out は #030303 止まりで純黒ではないため自前で追加）。Piko設定の「外観」セレクタで **ライト / ダークブルー / ブラック / 端末の設定を使う** を1箇所で選べます（ドロワーの月アイコンのシートとも共存し、そちらの操作は上書きされません）
+- **「返信先」行の復活**: 返信投稿に「返信先: @〜さん」行が戻ります。ただし表示はサーバーが返信リンクデータを返す画面だけ（通知タブでは表示を確認済み。ツイート詳細のスレッドでは現行のサーバー応答にデータが無いため表示されません — [SPEC.md](SPEC.md) §15）
 - **更新音の復活**: 引っ張って更新の開始時に「プスッ」、完了時に「ポン」（Twitter 8.65 の実物音源を各自で抽出して埋め込む方式 — 音源自体は配布しません）
 - **「引っ張って更新」の再現**: 白バッジ＋円弧が深い位置に出現し、飽和曲線で沈み、離すと少し上がって固定位置で Material 風に伸縮回転。リング寸法と矢じりは旧 Twitter アプリの実物（MaterialProgressDrawable）準拠。ヘッダーの青鳥は stock サイズの静止画
 - **できなかったこと（正直な記録）**: 投稿元ラベル（「Twitter for Android」等）は復活できません。現行 X の GraphQL は `source` フィールド自体を要求しておらず、クライアントにデータが届きません。他人のいいね一覧もサーバー側の仕様で非公開です
@@ -29,7 +31,7 @@
 ## 適用手順の概略
 
 1. Morphe で `patches/patches-3.75.0-jp.mpp` をパッチソースとして読み込み、`patches/options-jp.json` の設定（Clone 有効＝パッケージ名 `com.twitter.android.piko`、Restore Twitter branding 有効）で、自分の X 12.41.0-prod.01 にパッチを当てる（48 パッチ適用）
-2. 完全な jp18 仕様にするには、[BUILD.md](BUILD.md) の「手順 B: 後処理」も実施する（初期設定の焼き込み、フィーチャースイッチ上書き登録、更新音、PTR オーバーレイ、ラベル消去の追加パッチ等）
+2. 完全な jp21 仕様にするには、[BUILD.md](BUILD.md) の「手順 B: 後処理」も実施する（初期設定の焼き込み、フィーチャースイッチ上書き登録、更新音、PTR オーバーレイ、ラベル消去の追加パッチ、純黒テーマ、返信先行等）。なお「外観」セレクタ（B14）は拡張ソースの変更としてバンドルに表現できる
 3. 自分の署名鍵で署名してインストールする（**署名鍵は全バージョンで同じものを使い続けてください**。鍵が違うと上書き更新できません）
 
 詳しい手順と各変更の施工箇所は [BUILD.md](BUILD.md)、維持すべき仕様の一覧は [SPEC.md](SPEC.md)、版ごとの変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
@@ -53,6 +55,6 @@
 
 ## English summary
 
-**comebackTwitter** is a Japanese customization set for [Piko NewX](https://github.com/crimera/piko-newx) (X 12.41.0-prod.01) that brings the client as close as possible to the circa-2020 Twitter experience: full Japanese localization of the patch UI, Twitter-era terminology (ツイート/リツイート), 2020-baseline default settings, removal of modern clutter (the home "add tab" tile, header Grok/search icons, the own-profile Share button, the "Made on X" and "Created with Grok" labels — photo user-tags are kept), the classic pull-to-refresh sounds, and a faithful recreation of the classic Material pull-to-refresh spinner (white badge, saturating descent, fixed hold position, ~1.3 s stretch-spin cycle, pull-phase arrowhead).
+**comebackTwitter** is a Japanese customization set for [Piko NewX](https://github.com/crimera/piko-newx) (X 12.41.0-prod.01) that brings the client as close as possible to the circa-2020 Twitter experience: full Japanese localization of the patch UI, Twitter-era terminology (ツイート/リツイート), 2020-baseline default settings, removal of modern clutter (the home "add tab" tile, header Grok/search icons, the own-profile Share button, the "Made on X" and "Created with Grok" labels — photo user-tags are kept), the classic pull-to-refresh sounds, and a faithful recreation of the classic Material pull-to-refresh spinner (white badge, saturating descent, fixed hold position, ~1.3 s stretch-spin cycle, pull-phase arrowhead). It also adds a true pure-black (#000) dark theme alongside Dim (#15202B), a unified Appearance selector (Light / Dark Blue / Black / Follow system) in the patch settings that coexists with the native theme sheet, and restores the "Replying to @…" row on reply posts wherever the server supplies the reply link data (verified in the Notifications tab; the thread view's server response does not include that data, so the row cannot appear there).
 
 This repository distributes **only our own work** — the modified patch bundle, translations, helper source code, and documentation. It does **not** contain any patched APK, any part of the X app, sound files, or signing keys. Obtain your own copy of X 12.41.0-prod.01 and patch it yourself with [Morphe](https://morphe.software). See [BUILD.md](BUILD.md) for the full procedure and [SPEC.md](SPEC.md) for the maintained specification. Unofficial fan work; not affiliated with X Corp. Author: ネコセンパイ (BlackCatLove2222), co-author: ミスティ. Based on crimera/piko-newx; refer to the upstream repository for its terms.

@@ -1,9 +1,9 @@
 # BUILD — 適用・ビルド手順
 
-comebackTwitter の jp18 仕様を再現する手順です。全体は2段階:
+comebackTwitter の jp21 仕様を再現する手順です。全体は2段階:
 
 - **手順 A（バンドルで完結）**: Morphe でパッチバンドルを当てる。日本語化と基本構成はここまでで入る
-- **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp18 仕様の残りはすべてここ
+- **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp21 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形）
 
 最後に **手順 C（署名）**。仕様の数値は [SPEC.md](SPEC.md) が正です。
 
@@ -118,6 +118,29 @@ java -jar morphe-desktop-<version>-all.jar patch \
 - **「Grokで作成」**: フラグ方式が存在しないため、判定役 `Lcom/x/ui/common/media/attribution/h;->p(...)`（classes7、平文コード）の**先頭4バイトだけ**を `const/4 v0, 0x0` ＋ `return-object v0` に書き換えるバイナリパッチを行う（対象命令の元のバイト列を施工前に必ず照合すること）。その後 dex の SHA-1 署名と Adler-32 チェックサムを再計算する。以降の本体は到達不能なデッドコードとして残る
   - 効果は「ドメインリストが空」というアプリ標準の未設定状態と等価。詳細・統合カードの両面でラベル行が合成されなくなる
   - 写真のユーザータグ付け・「AIで生成」開示は別系統のため影響しない
+
+### B12. 純黒テーマ「ブラック」（jp19、classes21 / resources.arsc）
+
+1. **動的色からの分離（classes21）**: `app/morphe/extension/newx/theme/DynamicColorPalette` の `isEnabled()` に、既存の dim / default 除外と並べて **contrast 除外**を追加する。新設ヘルパー `useContrastTheme()` は `useDimTheme()` / `useDefaultTheme()` と全く同型（現在の dark_style が "contrast" かを返す）。これで dark_style=contrast のとき、拡張のパレット経路は本体のネイティブパレット＋既存の色スタンプフックを通り、contrast 用の背景表（背景 #000000、浮いた面 #121314 等）がそのまま効く。動的色の副作用は Dim 時と同様に全て OFF になる。Material You（material）の経路には触れない
+2. **改名（resources.arsc）**: 文字列プールの表示値だけを変更する — `piko_newx_theme_contrast` の en を "Material You (High Contrast)" → **"Black"**、ja を "Material You（高コントラスト）" → **「ブラック」**、同項目の summary（en / ja）も実際の意味（標準パレット＋背景だけ純黒）に書き換える。プール全数照合で、変更が対象の4文字列だけであることを確認すること
+
+### B13. 「返信先」行の復活（jp20、classes19）
+
+状態ビルダー `Lcom/x/urt/items/post/w5;->p(...)`（平文コード）で、decider `Lcom/x/ui/common/media/attribution/h;->A(...)` の戻り値が格納されたレジスタの**唯一の読み取り箇所**にある分岐 `if-eqz vXX, :cond_*` を、無条件の `goto :cond_*` に変える（変更は1命令のみ）。これで会話系モジュールでも replyContext の実モデルが UI 状態に常時渡る。decider 自体と呼び出しには触れない。null 代入ブロックは到達不能になるが、最小差分のために残置する。
+
+※ 行が実際に表示されるかはサーバー応答のデータ依存（[SPEC.md](SPEC.md) §15）。通知タブでは表示され、ツイート詳細（スレッド）では現行のサーバー応答に材料が無いため表示されない。これは本手順の不備ではない。
+
+### B14. 統合「外観」セレクタ（jp21、拡張ソース — **.mpp バンドルで表現可能**）
+
+本項目は後処理ではなく、**パッチプロジェクト側の拡張ソース変更として .mpp バンドルにそのまま入れられる**のが正規形（X 本体のクラスへのバイトコードパッチは一切不要）。変更は3点:
+
+1. **設定の登録**（`BuiltInSettings`）: 生成コードの設定登録と同型のブロックで、単一選択設定を登録する — `registerSingleChoice("newx.appearance.theme", "newx.theme.appearance", <タイトル文字列>, <概要文字列>, order=50, rebootApp=true)`、`configureSingleChoice("newx.theme.appearance", "system", true)`、選択肢 `light` / `dim` / `black` / `system`（`system` に既定印）。登録は contributor 経由で生成登録の後・freeze の前に実行されるため、生成グループ `newx.appearance.theme` への相乗りが成立する。ブロック全体を try/catch で包み、登録失敗が起動を壊さないこと（fail-open）
+2. **同期の呼び出し**（`NewXSettingsHost.install()`）: 末尾に `AppearanceSync.sync()` の呼び出しを追加する。install() は `XApplication.onCreate` から `SettingsRegistry.load()` より前に呼ばれるため、同期書き込みは全コンシューマより先に着地する
+3. **同期クラス**（新規 `AppearanceSync`、theme パッケージ）: `newx.theme.appearance` の現在値を読み、未設定または適用済みマーカー `newx.theme.appearance.synced` と同値なら何もしない（ワンショット意味論）。異なる場合のみ、[SPEC.md](SPEC.md) §14 の対応表どおりに本体 pref（`dark_mode_state` / `dark_mode_appearance`）と拡張の `dark_style` を書き込み、マーカーを更新する。全体を try/catch で包む
+
+ラベル文字列は、バンドル形では専用の `piko_newx_appearance_*` をパッチのリソースに追加する。
+
+**手ビルドで同等にする場合**: classes21 の smali 編集で同じ3点を施工できる。実物は `src/AppearanceSync.smali`（同期クラス全文）と `src/BuiltInSettings-registerAppearance.smali`（登録ブロックの抜粋）。手ビルドでは arsc への文字列追加を避けるため、ラベルの一部に既存文字列を流用している: ライト = `grok_settings_light`、端末の設定を使う = `settings_dark_mode_system`（ダークブルー / ブラックは `piko_newx_theme_dim` / `piko_newx_theme_contrast` を共用）。この場合の差分は classes21 のみになる。
 
 ## 手順 C — 再署名
 
