@@ -29,6 +29,15 @@ d8 --min-api 29 --output dexout classes
 
 アプリ本体の合成（Compose）には一切触れません。ヘッダーのロゴ枠には鳥だけが残り（バンドル同梱の単層・静止鳥ファイル。入手と塗り色は [../BUILD.md](../BUILD.md) 手順 B10）、円弧はこのヘルパーだけが描きます。
 
+## AppearanceSync.smali / BuiltInSettings-registerAppearance.smali — jp21「外観」セレクタ
+
+jp21 の統合「外観」セレクタ（[../SPEC.md](../SPEC.md) §14）を手ビルドで施工した際の実物 smali です。
+
+- **AppearanceSync.smali**: 起動時同期クラスの全文。配置先はパッチ済み APK の **classes21.dex**、`Lapp/morphe/extension/newx/theme/AppearanceSync;`
+- **BuiltInSettings-registerAppearance.smali**: 設定登録の追加分（`register()` 末尾への呼び出し1行＋ `registerAppearance()` メソッド）の抜粋。本体は生成コードのため全文は同梱しません
+- ほかに `NewXSettingsHost.install()` の末尾へ `AppearanceSync.sync()` の呼び出し追加（2行）が必要です。手順の全体は [../BUILD.md](../BUILD.md) の B14
+- バンドル形では、同等物をパッチプロジェクト側の Java ソースとして入れます（ラベルは専用文字列 `piko_newx_appearance_*` を使用）。手ビルド版は arsc 追加を避けるため一部のラベルに既存文字列を流用しています
+
 ## 同梱していないもの
 
 - **更新音ヘルパー（`Lpiko/jp8/Snd;`）**: 音源（Twitter 8.65 の `psst2.ogg` / `pop.ogg`）をバイト配列として埋め込む設計のため、音源の権利の関係でソース・バイナリとも同梱しません。再現方法は [../BUILD.md](../BUILD.md) の手順 B9 を参照してください（構造は単純で、SoundPool で2音を状態エッジで鳴らすだけです）
