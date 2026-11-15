@@ -1,0 +1,172 @@
+[
+    {
+        "meta": {
+            "created_at": "2026-11-13T11:19:46.514317611Z",
+            "updated_at": "2026-11-13T11:34:51.850897141Z",
+            "source": "patches-3.75.0-jp.mpp",
+            "sha256": "d71823a80a3e069e45013a2416c59ec32cf035cdc79bdb8e2ebb2fa2e93902ba"
+        },
+        "patches": {
+            "NewX: Remove ads": {
+                "enabled": true
+            },
+            "NewX: Disable blur effects": {
+                "enabled": true
+            },
+            "NewX: Restore Twitter branding": {
+                "enabled": true
+            },
+            "NewX: Browse tweet object": {
+                "enabled": false
+            },
+            "NewX: Open canonical URLs": {
+                "enabled": true
+            },
+            "NewX: Clone": {
+                "enabled": true,
+                "options": {
+                    "packageName": "com.twitter.android.piko",
+                    "appName": "X Piko"
+                }
+            },
+            "NewX: Crash logs": {
+                "enabled": true
+            },
+            "NewX: Custom font": {
+                "enabled": true
+            },
+            "NewX: Custom sharing domain": {
+                "enabled": true
+            },
+            "NewX: Permanent share links": {
+                "enabled": true
+            },
+            "NewX: Remove share tracking parameters": {
+                "enabled": true
+            },
+            "NewX: Customize drawer items": {
+                "enabled": true
+            },
+            "NewX: Theme": {
+                "enabled": true
+            },
+            "NewX: Feature switch overrides": {
+                "enabled": true
+            },
+            "NewX: Enable quality-of-life feature flags": {
+                "enabled": true
+            },
+            "NewX: Customize inline actions": {
+                "enabled": true
+            },
+            "NewX: Inline download button": {
+                "enabled": true
+            },
+            "NewX: Redirect downloads to chosen folder": {
+                "enabled": true
+            },
+            "NewX: Log HLS audio renditions": {
+                "enabled": false
+            },
+            "NewX: Customize media menu items": {
+                "enabled": true
+            },
+            "NewX: Set default media tab": {
+                "enabled": true
+            },
+            "NewX: Gallery profile Photos tab": {
+                "enabled": true
+            },
+            "NewX: Customize navigation bar": {
+                "enabled": true
+            },
+            "NewX: Hide post author actions": {
+                "enabled": true
+            },
+            "NewX: Hide post reply bar": {
+                "enabled": true
+            },
+            "NewX: Customize post menu items": {
+                "enabled": true
+            },
+            "NewX: Set default profile post sorting": {
+                "enabled": true
+            },
+            "NewX: Customize profile tabs": {
+                "enabled": true
+            },
+            "NewX: Set default reply sorting": {
+                "enabled": true
+            },
+            "NewX: Server error logging": {
+                "enabled": false
+            },
+            "NewX: Disable video player scrolling": {
+                "enabled": true
+            },
+            "NewX: Hide premium upsell": {
+                "enabled": true
+            },
+            "NewX: Unlock color customization": {
+                "enabled": true
+            },
+            "NewX: Unlock downloads": {
+                "enabled": true
+            },
+            "NewX: Customize timeline tabs": {
+                "enabled": true
+            },
+            "NewX: Disable automatic timeline refresh": {
+                "enabled": true
+            },
+            "NewX: Filter For You by topic": {
+                "enabled": true
+            },
+            "NewX: Hide AI-generated posts": {
+                "enabled": true
+            },
+            "NewX: Hide Discover more": {
+                "enabled": true
+            },
+            "NewX: Hide compose button": {
+                "enabled": true
+            },
+            "NewX: Hide new posts pill": {
+                "enabled": true
+            },
+            "NewX: Hide post dividers": {
+                "enabled": false
+            },
+            "NewX: Hide Spaces bar": {
+                "enabled": true
+            },
+            "NewX: Hide timeline tabs bar": {
+                "enabled": true
+            },
+            "NewX: Hide who to follow": {
+                "enabled": true
+            },
+            "NewX: Restore pinned home tab": {
+                "enabled": true
+            },
+            "NewX: Restore timeline position": {
+                "enabled": true
+            },
+            "NewX: Show poll results": {
+                "enabled": true
+            },
+            "NewX: Show sensitive media": {
+                "enabled": true
+            },
+            "NewX: Hide posts by verified account type": {
+                "enabled": true
+            },
+            "NewX: Filter posts by keyword": {
+                "enabled": true
+            },
+            "NewX: Translator": {
+                "enabled": true
+            }
+        }
+    }
+]
