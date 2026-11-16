@@ -38,6 +38,22 @@ jp21 の統合「外観」セレクタ（[../SPEC.md](../SPEC.md) §14）を手�
 - ほかに `NewXSettingsHost.install()` の末尾へ `AppearanceSync.sync()` の呼び出し追加（2行）が必要です。手順の全体は [../BUILD.md](../BUILD.md) の B14
 - バンドル形では、同等物をパッチプロジェクト側の Java ソースとして入れます（ラベルは専用文字列 `piko_newx_appearance_*` を使用）。手ビルド版は arsc 追加を避けるため一部のラベルに既存文字列を流用しています
 
+## ReplySortingSync.smali / ReplySortingResolver-getDefault.smali — jp22 関連性ピン留め
+
+jp22 の返信ソート関連性ピン留め（[../SPEC.md](../SPEC.md) §16、[../BUILD.md](../BUILD.md) B15）のうち、拡張側（classes21）の実物です。
+
+- **ReplySortingSync.smali**: 保存済み設定値を `"Relevance"` に一度だけ書き換える起動時同期クラスの全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/misc/ReplySortingSync;`。ほかに `NewXSettingsHost.install()` の末尾へ呼び出し追加（AppearanceSync の直後）が必要です
+- **ReplySortingResolver-getDefault.smali**: 解決役 `ReplySortingResolver.getDefault()` を無条件で `"Relevance"` を返す形に置き換えたメソッドの抜粋
+- 登録既定値の復元（B15 の1点目）は classes19 側の生成登録コードの編集であり、本節の同梱物には含みません（手順は BUILD.md B15）
+
+## HeaderRowSnippets.smali — jp23 引用数ピボット／ソートタブ除去
+
+jp23 の詳細ヘッダ行まわり（[../SPEC.md](../SPEC.md) §17、[../BUILD.md](../BUILD.md) B16 / B17）の実物抜粋集です。X 本体側の変更のため、全文ではなく**追加・変更した命令列の断片**を対象メソッドごとに収録しています:
+
+- 断片1（B17）: 行描画メソッド内の **goto スキップ＋生存レジスタ再現12命令**（jp23.1 の納品形）。⚠ 再現命令列なしでスキップだけを行うと VerifyError で起動不能になります。実施条件と検証要件は BUILD.md B17 を必ず参照してください
+- 断片2（B16）: マッパ（classes6）への Quote エントリ追加
+- 断片3〜5（B16）: 焦点状態の組み立て（classes7）における Quote 件数の取得ループ、showPivot への OR、ピボットラベルの差し替え
+
 ## 同梱していないもの
 
 - **更新音ヘルパー（`Lpiko/jp8/Snd;`）**: 音源（Twitter 8.65 の `psst2.ogg` / `pop.ogg`）をバイト配列として埋め込む設計のため、音源の権利の関係でソース・バイナリとも同梱しません。再現方法は [../BUILD.md](../BUILD.md) の手順 B9 を参照してください（構造は単純で、SoundPool で2音を状態エッジで鳴らすだけです）
