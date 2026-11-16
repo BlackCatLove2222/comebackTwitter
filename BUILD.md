@@ -1,9 +1,9 @@
 # BUILD — 適用・ビルド手順
 
-comebackTwitter の jp21 仕様を再現する手順です。全体は2段階:
+comebackTwitter の jp23 仕様を再現する手順です。全体は2段階:
 
 - **手順 A（バンドルで完結）**: Morphe でパッチバンドルを当てる。日本語化と基本構成はここまでで入る
-- **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp21 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形）
+- **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp23 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形、B15 は一部がバンドル表現可能。B17 は任意の上級手順）
 
 最後に **手順 C（署名）**。仕様の数値は [SPEC.md](SPEC.md) が正です。
 
@@ -51,7 +51,7 @@ java -jar morphe-desktop-<version>-all.jar patch \
 
 生成済み設定レジストリと各 Config クラスのデフォルト値を、[SPEC.md](SPEC.md) §4 の表どおりに書き換える:
 
-- レジストリ側（`SettingsRegistry`）: `hide_add_tab_button=true`、`for_you_filtering.tab_hook=false`、`hide_who_to_follow=true`、`hidden_inline_actions` の `ViewCount` を初期選択、`custom_sharing_domain="twitter.com"`、`default_reply_sorting="Recency"`（選択マーカーも連動）、`hide_spaces_bar=true`、`dark_style="dim"`（選択マーカーも連動）、`hidden_drawer_items` の初期選択を §4 の12項目に（**リストは選択しない**）
+- レジストリ側（`SettingsRegistry`）: `hide_add_tab_button=true`、`for_you_filtering.tab_hook=false`、`hide_who_to_follow=true`、`hidden_inline_actions` の `ViewCount` を初期選択、`custom_sharing_domain="twitter.com"`、`default_reply_sorting="Recency"`（選択マーカーも連動。**jp22 以降は B15 で `"Relevance"` に変更する**のが現行仕様）、`hide_spaces_bar=true`、`dark_style="dim"`（選択マーカーも連動）、`hidden_drawer_items` の初期選択を §4 の12項目に（**リストは選択しない**）
 - 拡張所有の設定（各 Config の初期化）: ナビの隠し項目 `"GROK"`、プロフィールタブの隠しリスト `"AffiliatedUsers,Reposts,SuperFollowers,Highlights,Articles"`
 - ドロワーの「作業を自動化」（`RESOURCE_NAME_drawer_grok_bot_automate_work`）も初期選択に追加する
 - コミュニティは非表示にしない（初期選択から外しておく）
@@ -141,6 +141,69 @@ java -jar morphe-desktop-<version>-all.jar patch \
 ラベル文字列は、バンドル形では専用の `piko_newx_appearance_*` をパッチのリソースに追加する。
 
 **手ビルドで同等にする場合**: classes21 の smali 編集で同じ3点を施工できる。実物は `src/AppearanceSync.smali`（同期クラス全文）と `src/BuiltInSettings-registerAppearance.smali`（登録ブロックの抜粋）。手ビルドでは arsc への文字列追加を避けるため、ラベルの一部に既存文字列を流用している: ライト = `grok_settings_light`、端末の設定を使う = `settings_dark_mode_system`（ダークブルー / ブラックは `piko_newx_theme_dim` / `piko_newx_theme_contrast` を共用）。この場合の差分は classes21 のみになる。
+
+### B15. 返信ソートの関連性ピン留め（jp22、classes19 / classes21）
+
+ツイート詳細の返信ソートを関連性（Relevance）に恒久固定する（[SPEC.md](SPEC.md) §16）。変更は3点:
+
+1. **登録既定値の復元（classes19、`SettingsRegistry`）**: B1 で焼いた `newx.timeline.default_reply_sorting` の登録既定を `"Recency"` → **`"Relevance"`** に戻し、選択肢マーカーも連動させる（Relevance を 0x1、Recency を 0x0 に）。この登録コードはバンドルの生成コード側にあるため、パッチプロジェクト側では**登録定義のデフォルト変更として表現できる**
+2. **解決役の無条件化（classes21、拡張側）**: `ReplySortingResolver.getDefault()` の本体を、`"Relevance"` を即返す形に置き換える。従来の解決順（前回値 → 保存値／登録既定 → フォールバック）はすべてバイパスされ、全消費経路（classes19 のリポジトリ初期化シードと UI 状態初期化シード）が単一の `getEnumDefault` 経由で常時 Relevance を得る。**拡張ソースの変更であり、.mpp パッチとして表現できる**
+3. **保存値のワンショット反転（classes21、拡張側・新規クラス）**: 起動時に一度だけ、保存済みの `newx.timeline.default_reply_sorting` を `"Relevance"` に書き換える同期クラス（jp21 の AppearanceSync と同型。マーカーで再実行を防ぎ、全体を try/catch で包む fail-open）を追加し、`NewXSettingsHost.install()` の末尾から呼ぶ。実効値は 2 で保証されるため、これは Piko設定の表示整合のためのもの。**拡張ソースの変更であり、.mpp パッチとして表現できる**
+
+手ビルドの実物は `src/ReplySortingSync.smali`（同期クラス全文）と `src/ReplySortingResolver-getDefault.smali`（無条件化したメソッドの抜粋）。手ビルドでの差分は classes19 + classes21。
+
+### B16. 引用数ピボット（jp23、classes6 / classes7）
+
+他者の投稿で引用があるとき、詳細ヘッダ行のピボットを「N件の引用を表示」にする（[SPEC.md](SPEC.md) §17）。引用数のデータ自体はサーバー応答に含まれており、不足しているのは搬送と表示だけ。
+
+1. **マッパへの Quote エントリ追加（classes6、`com/x/mappers/b;->e`）**: 応答モデル（postdetail のフラグメントモデル）の **quote_count フィールド（public final）を iget で直接読む**（アクセサは存在しない）。既存の件数付きエントリと同じ引数形でカウントエントリ（種別 Quote、件数、false, 4）を構築し、エントリ配列の**7番目**に追加する（配列生成の範囲を6要素分から7要素分へ拡張）。下流の搬送（エントリ列 → 会話マッパの汎用通過 → 焦点状態）は無変更で届く。**X 本体 dex への後処理**（バンドルでは表現できない）
+2. **件数の取得とラベル差し替え（classes7、焦点状態の組み立て `a0->d` の非描画な前計算部）**:
+   - 既存のリツイート数取得ループの直後に、同じエントリ列を走査して Quote エントリの件数を保持する第2ループを追加する。**`.locals` は増やさない**こと（引数レジスタの位置がずれて既存の命令形式が壊れる）。スクラッチに使うレジスタは、後段が依存するゼロ定数ペアを全出口で復元すること
+   - 他者分岐のピボットラベルは、引用数 > 0 のとき文字列テンプレート `quote_tweets_with_count`（`{count}件の引用`）に件数を埋め込み「を表示」を連結したものに差し替える。0 件では従来の「引用を表示」、自分の投稿は「アクティビティを表示」のまま
+   - ピボットの表示条件（showPivot）に **引用数 > 0** を OR で追加する（RT 0 件でも引用があれば出る）。行全体のゲート（返信数 > 1）には触れない
+
+### B17. 詳細ヘッダ行のソートタブ除去（jp23 / jp23.1、classes7）— ⚠ 上級・リスクあり（任意）
+
+詳細ヘッダ行の左側のソートタブだけを消す手順。**この手順は [SPEC.md](SPEC.md) §11 の安全原則に対する条件付き例外（カテゴリ (f)）であり、必須の検証をすべて満たせない場合は実施してはいけない**。省略した場合の形（タブは見えるが §16 のピン留めで実質無力）は jp22 形として仕様どおり成立する — それがフォールバックである。
+
+対象は行の描画メソッド（`com/x/ui/common/media/attribution/e->d`）。構造: 外側の Row の中に、ソートボタンが**入れ子の Row ノード**としてインライン排出され、その後にピボットの置換グループが続く。ボタンは独立した composable 呼び出しではないため、呼び出し箇所の除去はできない。
+
+**方式（goto スキップ）**:
+
+1. ボタンの開始ノード呼び出し（startNode）の**直前に無条件 `goto`** を1命令挿入し、着地点ラベルをボタンの終了ノード呼び出し（endNode）の**直後**（ピボットのゲートの直前）に置く。消えるのはボタンのノード排出だけ。remember 群（シート開閉状態・ソートモード状態・クリックラムダ）と Modifier・測定ポリシーの計算は従来どおり実行され、スロット位置は変わらない
+
+**⚠ 退避コピーの罠（jp23 初版の事故原因）**:
+
+ボタンの排出区間の中では、ボタンの Text 呼び出しの引数シャッフルで低位レジスタが潰れるため、**後段（ピボット／シート）が必要とする値を高位レジスタへ逃がす退避コピー**が行われている。goto で区間を飛ばすと、この退避ごと消えて着地後のレジスタが未定義・型違いになり、**ART ベリファイアがクラスを拒否してアプリが起動不能になる**（jp23 初版の実例: `VerifyError … [0x247] copy-reference v8<-v44 type=Undefined`。検証はリンク時に走るため、詳細画面を開く前に起動時点で落ちる）。
+
+**必須の対策 — 生存レジスタの再現（jp23.1 の形）**:
+
+goto の**直前**に、退避コピーが作るはずだった値を**原本とまったく同じオブジェクト／値**で再現する命令列を置く。以下は本 dex（12.41 の当該メソッド）での実測対応表（12命令、純粋な move / const / sget のみ。composer は呼ばない）:
+
+| # | 命令 | 再現する値 |
+|---|---|---|
+| 1 | `move-object/from16 v34, v19` | シート開閉状態（MutableState） |
+| 2 | `move-object/from16 v36, v10` | ソートモード状態（MutableState） |
+| 3 | `move-object/from16 v44, v12` | Composer の Empty センチネル |
+| 4 | `move-object/from16 v45, v20` | 配置（アラインメント）単体 |
+| 5 | `move-object/from16 v46, v11` | レイアウトポリシー単体 |
+| 6 | `move-object/from16 v47, v14` | ノード用 Function0 単体 |
+| 7 | `move-object/from16 v48, v15` | レイアウトポリシー単体 |
+| 8 | `move-object/from16 v18, v11` | レイアウトポリシー単体（Text 引数スロット用、#5 と同源） |
+| 9 | `sget-object v16, Landroidx/compose/ui/text/font/s;->m` | フォント単体（原本は区間内でロードするため再取得） |
+| 10 | `const/4 v6, 0x0` | 原本の着地値 int 0 |
+| 11 | `const/4 v7, 0x1` | 原本の着地値 true |
+| 12 | `move-object/from16 v19, v33` | 行の Modifier。**必ず最後**（#1 の退避元が v19 のため、先に潰すと状態が壊れる） |
+
+順序制約は #1 が #12 より前であることの1点のみ。ベースの X や対象メソッドが変わればレジスタ対応は変わるため、その場合は到達定義解析で対応表を作り直すこと（上表を鵜呑みにしない）。
+
+**必須の検証（納品条件）**:
+
+1. **レジスタ生存性パス**: 最終 APK から抽出した dex に対し、バイパス区間内で書かれる全レジスタについて「着地時点の到達定義」を機械解析し、着地後に読まれるものがすべて正しい型カテゴリで定義済みであること、センチネル・状態クラスのレジスタについては**値の出所（同一の sget 先・同一の退避元）まで原本と一致**することを確認する。**違反ゼロが合格条件**
+2. グループ収支（構造呼び出しの開始／終了カウント一致）は**必要条件にすぎない**。jp23 初版はこの確認を通過しながら VerifyError で落ちた — 合格の本体は 1 の生存性である
+3. 実機でのコールド起動確認（起動ログに `Verifier rejected class` が無いこと）と、詳細画面の開閉でクラッシュしないこと
+
+手ビルドの実物抜粋は `src/HeaderRowSnippets.smali`（goto＋再現命令列と、B16 の前計算部抜粋）。
 
 ## 手順 C — 再署名
 
