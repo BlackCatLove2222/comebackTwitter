@@ -54,6 +54,37 @@ jp23 の詳細ヘッダ行まわり（[../SPEC.md](../SPEC.md) §17、[../BUILD.
 - 断片2（B16）: マッパ（classes6）への Quote エントリ追加
 - 断片3〜5（B16）: 焦点状態の組み立て（classes7）における Quote 件数の取得ループ、showPivot への OR、ピボットラベルの差し替え
 
+## ZombieFilter.java / ZombieSettings.java — jp24 ゾンビフィルター
+
+jp24 のゾンビフィルター（[../SPEC.md](../SPEC.md) §18）の評価器と設定キーの実物です。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/` 配下。
+
+- **ZombieFilter.java**: ルール評価器の全文（Z1 文字種 / Z2 絵文字のみ / Z4a 完全重複 / Z4b 近似重複（jp24.2）/ Z7 コピー＋リンク・引用 / Z8 連投 / Z9 引用テンプレ使い回し / Z10 短文＋引用）。入口は `NewXTimelineFilter.filterItem()` に評価段を1段追加する形で、変更した本体・UI 側（NewXTimelineFilter / TimelineModelAccess / FilteredRepliesStore / PostFilterFragment / ZombieSettingsSection 等）の全文は同梱しません — バンドル側の piko-newx ソースに同名ファイルがあるため、差分は [../BUILD.md](../BUILD.md) B18 の要点と本ファイルで追えます
+- **ZombieSettings.java**: 設定キー（`newx.content.zombie_filtering.*`）と既定値の定義
+- 純ロジックの単体テストは JVM ハーネスで実施（jp24.2 時点で 147 件全通過）
+
+## JpDefaults.java — jp24.2 データ使用量デフォルト
+
+初回だけ本体設定のデフォルトを書き換える小さなクラス（[../SPEC.md](../SPEC.md) §19、[../BUILD.md](../BUILD.md) B19）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/JpDefaults;`。`NewXTimelineFilter.filterTimelineItems` の入口から一度だけ呼ばれ、本体 SharedPreferences に video_autoplay="never" / image_quality="wifi_and_mobile" / video_quality="wifi_and_mobile" を書く（マーカー `newx.jp.data_usage_defaults_v1`）。固定化ではなくデフォルト変更なので、UI からの変更は以後も有効です。
+
+## JpMediaStoreDestination.java / JpRoutingDestination.java / DownloadSnippets.smali — jp24.3 / jp24.5 保存先デフォルト
+
+ダウンロードの保存先デフォルト（[../SPEC.md](../SPEC.md) §20、[../BUILD.md](../BUILD.md) B20）の実物です。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/misc/` 配下。
+
+- **JpMediaStoreDestination.java**: MediaStore コレクション（画像=Pictures/Twitter、動画=Movies/Twitter）への宛先バックエンド。crimera ダウンロードエンジンの `DestinationWriter` 実装で、IS_PENDING で insert → 転送 → complete() で公開する
+- **JpRoutingDestination.java**: 宛先 Uri が MediaStore コレクションなら MediaStore 側、それ以外は従来の SAF 側へ振り分けるルーター
+- **DownloadSnippets.smali**: NewXDownloadFolders の追加メソッド（defaultTreeUri / effectiveTreeUri 2種）と、InlineDownloadButton 側の外科編集2点（needsFolderPrompt 本体差し替え、enqueueDownload の呼び出し差し替え）の抜粋。⚠ InlineDownloadButton 本体にはパッチ注入ブリッジがあるため丸ごと差し替え厳禁 — jp24.3 で実際にボタンを消した事故と対策（ブリッジ走査）は B20 と [../CHANGELOG.md](../CHANGELOG.md) の jp24.5 項を参照
+
+## QuoteRowSnippets.smali — jp24.4 引用行の常時表示
+
+詳細ヘッダ行の表示ゲート（返信数 > 1）を常時表示にする1行変更（[../SPEC.md](../SPEC.md) §21、[../BUILD.md](../BUILD.md) B21）。対象は X 本体側（classes7）のプレゼンタのため、変更箇所の説明と前後値のみを収録しています。
+
+## DmIconSnippets.smali / DmIconEnvelope.xml — jp24.6 DM アイコン
+
+ナビバーのチャットアイコンを従来の DM マーク（封筒）にする変更（[../SPEC.md](../SPEC.md) §22、[../BUILD.md](../BUILD.md) B22）。
+
+- **DmIconSnippets.smali**: 未選択時 = アイコンレジストリ（classes18）の付け替え1行、選択時 = ic_vector_chat.xml の pathData 差し替え、の2点の抜粋
+- **DmIconEnvelope.xml**: 選択時用の自作「塗りの封筒」ベクターの XML ソース。未選択時の封筒輪郭（ic_vector_email_stroke、アプリ内蔵）と外形を揃え、フラップの V 字を逆巻きサブパスで抜いたもの
+
 ## 同梱していないもの
 
 - **更新音ヘルパー（`Lpiko/jp8/Snd;`）**: 音源（Twitter 8.65 の `psst2.ogg` / `pop.ogg`）をバイト配列として埋め込む設計のため、音源の権利の関係でソース・バイナリとも同梱しません。再現方法は [../BUILD.md](../BUILD.md) の手順 B9 を参照してください（構造は単純で、SoundPool で2音を状態エッジで鳴らすだけです）

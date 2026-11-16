@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DmIconEnvelope.xml — jp24.6 選択時アイコン（塗りの封筒）の XML ソース
+
+     res/drawable/ic_vector_chat.xml の pathData をこの内容に差し替える
+     （手順は ../BUILD.md の B22、抜粋は DmIconSnippets.smali）。
+     外形は ic_vector_email_stroke（未選択時の封筒輪郭）と同一の
+     1.5–22.5 × 2.5–21.5 / 角丸 3.5。フラップの V 字グルーヴは
+     逆巻きサブパスで抜く（fillType は既定の nonZero のまま）。
+     2つ目のサブパス（M22.5,7.4…）がグルーヴ: 本体と巻き方向を逆にすること。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M5,2.5L19,2.5C20.94,2.5 22.5,4.06 22.5,6L22.5,18C22.5,19.94 20.94,21.5 19,21.5L5,21.5C3.06,21.5 1.5,19.94 1.5,18L1.5,6C1.5,4.06 3.06,2.5 5,2.5ZM22.5,7.4L12,12.2L1.5,7.4L1.5,9.6L12,14.4L22.5,9.6Z" />
+</vector>
