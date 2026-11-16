@@ -205,6 +205,39 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 
 手ビルドの実物抜粋は `src/HeaderRowSnippets.smali`（goto＋再現命令列と、B16 の前計算部抜粋）。
 
+### B18. ゾンビフィルター（jp24 / jp24.2、拡張ソース＋トランスプラント）
+
+1. 拡張ソース（piko-newx の extensions/newx）に ZombieFilter / ZombieSettings / ZombieSettingsSection を新規実装し、NewXTimelineFilter（filterItem への評価段追加）/ TimelineModelAccess / FilteredRepliesStore / PostFilterFragment を変更する。実物は [src/ZombieFilter.java](src/ZombieFilter.java) / [src/ZombieSettings.java](src/ZombieSettings.java)、仕様は [SPEC.md](SPEC.md) §18
+2. 純ロジックは JVM ハーネスで単体テストする（jp24.2 時点で 147 件）
+3. javac → D8（min-api 26）→ baksmali で smali 化し、配置する。**classes19 の NewXTimelineFilter 本体にはパッチ注入ブリッジがあるため、変更/新規メソッドのみを明示リスト（TAKE 方式）でトランスプラントし、本体バイト列へ一括差分を当てない**。classes21 はファミリー単位で差し替える（プレフィックス境界に注意 — PostFilterRule と PostFilterRuleAdapter のような前方一致の巻き込みを防ぐこと）
+4. 互換性のため、旧シグネチャ互換コンストラクタ（Evaluation / MemoEntry）とマーカー型クラス（-IA）を保持する
+5. 全クラス相互参照監査で、ベースライン比の新規欠落ゼロを確認する
+
+### B19. データ使用量デフォルト（jp24.2、classes21）
+
+1. 新規クラス `JpDefaults`（[src/JpDefaults.java](src/JpDefaults.java)）を classes21 に追加する
+2. `NewXTimelineFilter.filterTimelineItems` の入口へ JpDefaults の呼び出しをトランスプラントする（B18 と同じ TAKE 方式）
+3. JpDefaults はマーカー `newx.jp.data_usage_defaults_v1` が無いときだけ、本体 SharedPreferences へ video_autoplay="never" / image_quality="wifi_and_mobile" / video_quality="wifi_and_mobile" を書く
+
+### B20. ダウンロード保存先デフォルト（jp24.3 / jp24.5、classes19 / classes21）
+
+1. 新規クラス `JpMediaStoreDestination` / `JpRoutingDestination`（[src/](src/) の同名 .java）を classes21 に追加する
+2. `NewXDownloadFolders` に defaultTreeUri / effectiveTreeUri（Context 版・引数なし版）を追加し、`NewXDownloader.install()` の writer を JpRoutingDestination に差し替え、`NewXDownloadTransfer` の complete() 公開を有効化する（抜粋は [src/DownloadSnippets.smali](src/DownloadSnippets.smali) 断片1〜3）
+3. ゲート変更: NativeDownloadRouter のフォールバック条件を UNUSABLE のみにし、enqueue は effectiveTreeUri を使う
+4. **classes19 の InlineDownloadButton 本体は出荷実物を保持**し、次の2点だけを smali 編集する: (a) needsFolderPrompt の本体を UNUSABLE 等値判定に差し替え（断片4）、(b) enqueueDownload 内の treeUri 呼び出し（1箇所）を effectiveTreeUri(MediaKind) 宛に変更（断片5）
+5. ⚠ **本体の丸ごと再コンパイルは厳禁**。本体にはパッチ注入ブリッジ（createDownloadAction / isCompositionDownloadableMedia）が同居し、再コンパイルすると実処理がダミーに戻ってダウンロードボタンが消失する（jp24.3 で発生、jp24.5 で修正）。作業前にブリッジ走査を行い、差し替え後は2メソッドの実処理が残っていることを確認する
+
+### B21. 引用行の常時表示（jp24.4、classes7）
+
+1. プレゼンタ `Lcom/x/urt/items/post/h1;->b` の返信数ゲート false 側（:cond_465）の `const/16 v36, 0x0` を `0x1` に変える（1行、命令サイズ不変。抜粋は [src/QuoteRowSnippets.smali](src/QuoteRowSnippets.smali)）
+2. v36 が FocalPostState の h 引数（showReplySorter）へそのまま流れ、他に再代入が無いことを確認する。同メソッド末尾のプレースホルダ全ゼロ初期化は対象外
+
+### B22. ナビバーの DM アイコン（jp24.6、classes18 / リソース）
+
+1. 未選択時: アイコンレジストリ `Lcom/x/icons/a;`（classes18）の clinit で、フィールド s1 に入る drawable id を 0x7f0804c7（ic_vector_chat_stroke）から **0x7f080546（ic_vector_email_stroke）** へ変える（1行。抜粋は [src/DmIconSnippets.smali](src/DmIconSnippets.smali)）
+2. 選択時: `res/drawable/ic_vector_chat.xml` の pathData を自作の塗り封筒（[src/DmIconEnvelope.xml](src/DmIconEnvelope.xml)）に差し替える。AXML の編集は文字列プールの再構築による外科編集で行い、他チャンクはバイト不変に保つ。編集後は aapt2 dump xmltree で新しい pathData が読めることを確認する
+3. 封筒ベクターは事前に描画して形を確認する（外形が email_stroke と揃っていること、フラップの V 字グルーヴが抜けていること）
+
 ## 手順 C — 再署名
 
 1. `zipalign -p 4` で整列
@@ -214,6 +247,9 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 ## 検証の作法（毎回行うこと）
 
 - 施工前の dex は、無変更で再構築するとバイト一致すること（ラウンドトリップ再現性）を先に確認してから編集する。再現しない dex（ツールチェーン製法が違うもの）は全面再構築を避け、B11 のような最小バイナリパッチに切り替える
+- **ブリッジ走査（jp24.5 で必須化）**: 拡張クラスの本体を差し替える前に、出荷バイナリで「実処理＋ `unpatchedBridge` の throw」を両方含むメソッドを洗い出す。該当クラスはメソッド単位のトランスプラントか smali 直接編集のみで触り、差し替え後にブリッジの実処理が残っていることを確認する。メソッド集合・署名・アクセスフラグの一致だけでは不十分
+- 分岐や goto を含むメソッドを編集したら、レジスタ生存性スキャンを行い、合流点で未定義のレジスタが無いことを確認する（B17 の教訓）
+- ファミリー差し替え後は、全クラス相互参照監査でベースライン比の新規欠落ゼロを確認する
 - 各段階で、前段の APK との zip エントリ差分（CRC 比較）が「意図したエントリだけ」であることを assert する
 - 最終 APK から編集対象 dex を再展開し、意図した変更だけが入っていることを再確認する
 
