@@ -22,6 +22,10 @@ final class ZombieFilter {
     static final String REASON_REPEAT_SCATTER = "REPEAT_SCATTER";
     static final String REASON_QUOTED_TEMPLATE = "QUOTED_TEMPLATE";
     static final String REASON_QUOTE_BAIT = "QUOTE_BAIT";
+    static final String REASON_FOREIGN_BAIT = "FOREIGN_BAIT";
+    static final String REASON_DOUBLE_REPLY = "DOUBLE_REPLY";
+    /** jp24.11: the post's author is on the user's designated list. */
+    static final String REASON_BLOCKED_AUTHOR = "BLOCKED_AUTHOR";
 
     /** Z10: a quote reply whose own text is at most this long is bait. */
     static final int QUOTE_BAIT_MAX_TEXT_LENGTH = 20;
@@ -138,6 +142,43 @@ final class ZombieFilter {
             counts.merge(text.substring(index, index + 3), 1, Integer::sum);
         }
         return counts;
+    }
+
+    /** True when the text contains any Japanese kana or kanji. */
+    static boolean containsJapanese(String text) {
+        if (text == null) return false;
+        for (int index = 0; index < text.length(); ) {
+            int codePoint = text.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (codePoint >= 0x3040 && codePoint <= 0x30FF
+                    || codePoint >= 0x3400 && codePoint <= 0x4DBF
+                    || codePoint >= 0x4E00 && codePoint <= 0x9FFF
+                    || codePoint >= 0xFF66 && codePoint <= 0xFF9D) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Z11': foreign-language bait in a Japanese thread. The thread root
+     * is Japanese, the reply text carries no Japanese at all (but does
+     * carry letters, so emoji/symbol-only replies stay Z2's job), and
+     * the author's display name carries no Japanese either. A missing
+     * root text or display name fails open: no evidence, no verdict.
+     * Both texts are expected in normalized form; the display name is
+     * passed raw.
+     */
+    static boolean isForeignBait(String rootText, String replyText, String displayName) {
+        if (rootText == null || replyText == null || displayName == null) return false;
+        if (!containsJapanese(rootText)) return false;
+        if (containsJapanese(replyText) || containsJapanese(displayName)) return false;
+        for (int index = 0; index < replyText.length(); ) {
+            int codePoint = replyText.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (Character.isLetter(codePoint)) return true;
+        }
+        return false;
     }
 
     /** Z1: text contains code points from a blocked script range. */

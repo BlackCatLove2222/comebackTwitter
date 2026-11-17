@@ -17,6 +17,9 @@ public final class ZombieSettings {
     static final String KEY_REPEAT_SCATTER = "newx.content.zombie_filtering.repeat_scatter";
     static final String KEY_QUOTED_TEMPLATE = "newx.content.zombie_filtering.quoted_template";
     static final String KEY_QUOTE_BAIT = "newx.content.zombie_filtering.quote_bait";
+    static final String KEY_FOREIGN_BAIT = "newx.content.zombie_filtering.foreign_bait";
+    static final String KEY_DOUBLE_REPLY = "newx.content.zombie_filtering.double_reply";
+    static final String KEY_BLOCKED_AUTHORS = "newx.content.zombie_filtering.blocked_authors";
 
     private static final BooleanSetting THREAD = new BooleanSetting(KEY_THREAD, true);
     private static final BooleanSetting CHARSET = new BooleanSetting(KEY_CHARSET, true);
@@ -32,6 +35,12 @@ public final class ZombieSettings {
             new BooleanSetting(KEY_QUOTED_TEMPLATE, true);
     private static final BooleanSetting QUOTE_BAIT =
             new BooleanSetting(KEY_QUOTE_BAIT, true);
+    private static final BooleanSetting FOREIGN_BAIT =
+            new BooleanSetting(KEY_FOREIGN_BAIT, true);
+    private static final BooleanSetting DOUBLE_REPLY =
+            new BooleanSetting(KEY_DOUBLE_REPLY, true);
+    private static final BooleanSetting BLOCKED_AUTHORS =
+            new BooleanSetting(KEY_BLOCKED_AUTHORS, true);
 
     private ZombieSettings() {
     }
@@ -72,6 +81,18 @@ public final class ZombieSettings {
         return Boolean.TRUE.equals(QUOTE_BAIT.get());
     }
 
+    public static boolean foreignBaitEnabled() {
+        return Boolean.TRUE.equals(FOREIGN_BAIT.get());
+    }
+
+    public static boolean doubleReplyEnabled() {
+        return Boolean.TRUE.equals(DOUBLE_REPLY.get());
+    }
+
+    public static boolean blockedAuthorsEnabled() {
+        return Boolean.TRUE.equals(BLOCKED_AUTHORS.get());
+    }
+
     public static void setThread(boolean enabled) {
         THREAD.save(enabled);
     }
@@ -106,5 +127,17 @@ public final class ZombieSettings {
 
     public static void setQuoteBait(boolean enabled) {
         QUOTE_BAIT.save(enabled);
+    }
+
+    public static void setForeignBait(boolean enabled) {
+        FOREIGN_BAIT.save(enabled);
+    }
+
+    public static void setDoubleReply(boolean enabled) {
+        DOUBLE_REPLY.save(enabled);
+    }
+
+    public static void setBlockedAuthors(boolean enabled) {
+        BLOCKED_AUTHORS.save(enabled);
     }
 }

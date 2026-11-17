@@ -58,8 +58,8 @@ jp23 の詳細ヘッダ行まわり（[../SPEC.md](../SPEC.md) §17、[../BUILD.
 
 jp24 のゾンビフィルター（[../SPEC.md](../SPEC.md) §18）の評価器と設定キーの実物です。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/` 配下。
 
-- **ZombieFilter.java**: ルール評価器の全文（Z1 文字種 / Z2 絵文字のみ / Z4a 完全重複 / Z4b 近似重複（jp24.2）/ Z7 コピー＋リンク・引用 / Z8 連投 / Z9 引用テンプレ使い回し / Z10 短文＋引用）。入口は `NewXTimelineFilter.filterItem()` に評価段を1段追加する形で、変更した本体・UI 側（NewXTimelineFilter / TimelineModelAccess / FilteredRepliesStore / PostFilterFragment / ZombieSettingsSection 等）の全文は同梱しません — バンドル側の piko-newx ソースに同名ファイルがあるため、差分は [../BUILD.md](../BUILD.md) B18 の要点と本ファイルで追えます
-- **ZombieSettings.java**: 設定キー（`newx.content.zombie_filtering.*`）と既定値の定義
+- **ZombieFilter.java**: ルール評価器の全文（Z1 文字種 / Z2 絵文字のみ / Z4a 完全重複 / Z4b 近似重複（jp24.2）/ Z7 コピー＋リンク・引用 / Z8 連投 / Z9 引用テンプレ使い回し / Z10 短文＋引用 / Z11' 外国語ベイト（jp24.8）の判定 `isForeignBait` と、指定アカウント用の理由定数 BLOCKED_AUTHOR（jp24.11）を含む）。入口は `NewXTimelineFilter.filterItem()` に評価段を1段追加する形で、変更した本体・UI 側（NewXTimelineFilter / TimelineModelAccess / FilteredRepliesStore / PostFilterFragment / ZombieSettingsSection 等）の全文は同梱しません — バンドル側の piko-newx ソースに同名ファイルがあるため、差分は [../BUILD.md](../BUILD.md) B18 の要点と本ファイルで追えます
+- **ZombieSettings.java**: 設定キー（`newx.content.zombie_filtering.*`）と既定値の定義（jp24.8 で foreign_bait、jp24.10 で double_reply、jp24.11 で blocked_authors を追加）
 - 純ロジックの単体テストは JVM ハーネスで実施（jp24.2 時点で 147 件全通過）
 
 ## JpDefaults.java — jp24.2 データ使用量デフォルト
@@ -84,6 +84,28 @@ jp24 のゾンビフィルター（[../SPEC.md](../SPEC.md) §18）の評価器�
 
 - **DmIconSnippets.smali**: 未選択時 = アイコンレジストリ（classes18）の付け替え1行、選択時 = ic_vector_chat.xml の pathData 差し替え、の2点の抜粋
 - **DmIconEnvelope.xml**: 選択時用の自作「塗りの封筒」ベクターの XML ソース。未選択時の封筒輪郭（ic_vector_email_stroke、アプリ内蔵）と外形を揃え、フラップの V 字を逆巻きサブパスで抜いたもの
+
+## JpForeignBaitCheck.java — jp24.8 / jp24.9 Z11' 外国語ベイト
+
+Z11'（日本語を含まない外国語返信）のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B24）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/JpForeignBaitCheck;`。判定本体は ZombieFilter.isForeignBait（ルート本文が日本語を含む／返信本文と表示名のどちらにも日本語が無い／返信に文字が含まれる、の3条件。材料が欠ける場合はフェイルオープン）。評価器への挿入は classes19 側の外科編集で、jp24.8 では挿入レジスタの型競合でクラッシュし jp24.9 で修正した経緯があります（レジスタ型ゲート必須 — BUILD.md の「検証の作法」参照）。
+
+## JpDoubleReplyCheck.java — jp24.10 Z12 同じ投稿への2回目のリプライ
+
+Z12 のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B25）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/JpDoubleReplyCheck;`。会話ルートごとに表示順のノートログ {postId, authorId, parentId} を保持し（再ノート時はその地点まで切り詰める Z8 と同じ再生意味論）、同一著者の同一親投稿への直接リプライが2回目以降なら DOUBLE_REPLY を返す。ルート投稿へのリプライ（Z8 の領域）・自分の投稿へのリプライ（セルフチェーン）・親著者不明時は対象外（フェイルオープン）。
+
+## BlockedAuthorsStore.java — jp24.11 / jp24.12 指定アカウント非表示
+
+指定アカウントの著者 ID リストの保存層（[../SPEC.md](../SPEC.md) §24、[../BUILD.md](../BUILD.md) B26）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/BlockedAuthorsStore;`。照合は数値 ID のみ（ハンドル名は変わり得るため使わない）。同梱定数 → 永続セットへの初回だけのシードと、ユーザー編集は永続層のみという二層構造です。
+
+⚠ **本リポジトリ同梱版のシードは空です**（作者個人の対象リストは配布しません）。自分のビルドでは `defaultIds()` に隠したいアカウントの数値 ID を自分で追加してください。判定・記録側（NewXTimelineFilter への外科挿入、理由 BLOCKED_AUTHOR、ホワイトリストより優先、会話ルート免除）は BUILD.md B26 が正です。
+
+## MuteCategory.java / MuteCategoryStore.java — jp24.13 カテゴリ別ミュート
+
+カテゴリ別ミュート（[../SPEC.md](../SPEC.md) §25、[../BUILD.md](../BUILD.md) B27）のデータクラスと保存層の全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/` 配下。
+
+- **MuteCategory.java**: カテゴリ1件分の定義（有効フラグ、対象フィールド4種＝本文／引用／@ID／表示名、晒し検出サブトグル、単語リスト）
+- **MuteCategoryStore.java**: プリセット5カテゴリ（ニュース / 政治系 / 荒らし / 晒し系 / 炎上系）のシード定義そのものを含む保存層。二層構造（同梱シード → 永続 JSON `newx.content.mute_categories`）、NFKC＋小文字化の部分文字列マッチで一致語を返し、理由 `MUTE_CAT_<ID>:<一致語>` の記録に使う。晒し系にはコード固定の個人情報パターン検出（電話番号形式／〒郵便番号／住所ヒューリスティクス）がサブトグル付きで入っています
+- 設定 UI のセクション（MuteCategorySettingsSection）と判定の組み込み（NewXTimelineFilter / FilterConfig / FilteredRepliesDialog の変更）は同梱しません — 手順と要点は BUILD.md B27 を参照
 
 ## 同梱していないもの
 
