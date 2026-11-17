@@ -1,6 +1,6 @@
 # BUILD — 適用・ビルド手順
 
-comebackTwitter の jp24.13.3 仕様を再現する手順です。全体は2段階:
+comebackTwitter の jp24.13.6 仕様を再現する手順です。全体は2段階:
 
 - **手順 A（バンドルで完結）**: Morphe でパッチバンドルを当てる。日本語化と基本構成はここまでで入る
 - **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp23 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形、B15 は一部がバンドル表現可能。B17 は任意の上級手順）
@@ -292,6 +292,36 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
    - classes21: ComposeSettingsHook にタイトル供給（画面タイトル文字列 `piko_newx_post_filtering_title` を返す）とクリックハンドラを追加する。ハンドラは設定 Activity への Intent に extra `piko_newx.open_screen` = `newx.content.post_filtering` を付けて起動する
    - classes20: 設定 Activity（PikoSettingsActivity）の onCreate の新規作成パスで extra を消費し、正規遷移（openScreen）と同形のトランザクション（対象 Fragment の反射生成 → replace → addToBackStack → commit、フッター非表示を含む）を実行する。失敗時は捕捉してルート一覧表示にフォールバックし、再生成時は発火させない
 3. 表示ゲートは Piko設定行のトグルと共通になる（仕様として受容済み）
+
+### B30. 起動時の OS 通知許可リクエストの抑止（jp24.13.4、classes.dex）
+
+[SPEC.md](SPEC.md) §28 の実装。前提として B28（マスタースイッチの false 固定）が施工済みであること。スイッチ false の側にいる「起動時の直接リクエスト」の起動ブロックだけを無条件スキップにする、**1命令の分岐書き換え**:
+
+1. classes.dex を逆アセンブルし、`ai/x/complat/client/r` の `invoke(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;`（MainActivity の DI 配線）を開く
+2. マスタースイッチ `x_lite_notifications_permission_prompt_enabled` の取得直後にある分岐 `if-nez v0, :cond_xxx` を **`goto :cond_xxx`** に書き換える（飛び先ラベルは自環境の逆アセンブル表記に合わせる）。スキップされるのは直後の起動ブロック3命令群（権限リクエスト用スコープの取得／識別子 0x1c で rw0 を捕捉する共有ラムダの生成／コルーチンの launch）のみで、合流後の経路はスイッチ true 時と同一になる。ブロック後に読まれるレジスタはすべて後段で再定義されることを確認してから施工する
+3. **共有の権限リクエスト機構には触れない**: ワーカー（classes10 `com/x/android/permissions/c`）、共有ラムダ本体（classes11）、リクエスタ `rw0.e` は無変更。起動ブロックのコード自体も dex 内に残す（到達不能にするだけ）
+
+検証: classes.dex は施工前に無変更再アセンブルが母体と**ビット一致**することを確認してから使う（一致しないツールチェーンでは施工しない）。`r.invoke` に対して編集前・編集後ともレジスタ型ゲート（「検証の作法」参照）を実行し PASS を確認する。残存スキャンとして、識別子 0x1c ＋ rw0 捕捉の組み合わせが全 dex で `r.invoke` のみに存在すること、起動ブロックが新 dex 内に無変更で残っていることを確認する。最終 dex の正規化 diff（ラベル改名・switch ペイロードのアライメント nop を除去）が分岐命令1行のみであること
+
+### B31. 送信完了バナーのクラシック化（jp24.13.5、classes6）
+
+[SPEC.md](SPEC.md) §29 の実装。リクエストモデルには色フィールドが無く、レンダラの色はテーマトークン固定・アイコンは単色ティントのため、**自前オーバーレイへの置き換え**が唯一の経路（jp15 の Arc と同じ「合成に触れず通常 View で出す」方式）:
+
+1. **ヘルパークラスを用意する**（全文は [src/](src/) に同梱）: `BannerUi.java`（表示実体。decorView 上の通常 View で、色・寸法はクラス内定数 — SPEC §29 の値）を `javac -source 8 -target 8` → `d8 --min-api 29` でコンパイルし smali 化する。手書きグルー `SentBanner.smali` / `SentBanner$k.smali` / `SentBanner$Fin.smali`（提示役と同一の suspend 契約を実装する状態マシン＋結果受け渡し）と合わせ、パッケージ `piko/jp135` として **classes6** に追加する
+2. **提示呼び出しの差し替え（classes6、1命令のみ）**: `com/x/composer/upload/v2/notifications/n` の `c` メソッド内で、送信完了ファミリーのリクエストをネイティブ提示 `n->e(api/a, api/n, ContinuationImpl)` へ渡している呼び出しを、`invoke-static Lpiko/jp135/SentBanner;->show(n, api/a, api/n, ContinuationImpl)` に差し替える。引数レジスタは元の呼び出しと同一に保つ。**n 内のもう1つの `n.e` 呼び出し（エラー系など別経路）は変更しない** — 置き換え範囲は送信完了ファミリーだけに限る
+3. **Activity の供給（classes6、+1命令）**: jp15 の `Lpiko/jp15/Arc;->attach` の末尾に `invoke-static SentBanner.attach(Activity)` の転送を1命令追加する（WeakReference で保持。Arc 本体の動作は変えない）
+4. ヘルパー側の契約（同梱ソースが正）: Activity と表示文言（リクエスト内の文言リソース）が取れ、他のバナーが表示中でなければオーバーレイを表示して suspend する。いずれか欠ければ**その場でネイティブ提示 `n.e` に委譲**する。表示中の追加送信は即座に AutoDismiss で完了する。終了コード（タップ = MessageClick／時間切れ等 = AutoDismiss）は提示役本来の結果処理がそのまま解釈するため、タップ時の遷移はネイティブと同一になる。コールバックは必ずメインスレッド投稿経由で非同期に届ける（呼び出し元のフレーム内では発火させない）
+
+検証: classes6 は参照ツールチェーンでビット一致の往復にならないため、B29 の classes17 / 20 と同じ**意味的同一性**（再アセンブル dex の逆アセンブルが母体ツリーと diff 0 件）を確認してから施工する。手書き smali の全メソッドと差し替え先 `n.c` に対して、最終 dex 上でレジスタ型ゲートを実行し PASS を確認する（既知の偽陽性が2種ある: Arc.attach の指摘は母体でも同一に出る既存のもの、BannerUi の `const-wide/16` 由来の指摘は d8 の正規出力に対するチェッカのモデル化漏れ — いずれも母体との比較で「増えていない」ことを確認する）。編集ツリーの diff が n.smali（1命令）／Arc.smali（+1命令）／新規 `piko/jp135/` のみであること。前段 APK との CRC 差分が classes6.dex ＋ META-INF のみであること
+
+### B32. コンポーザーのブースト・アップセルの抑止（jp24.13.6、classes18）
+
+[SPEC.md](SPEC.md) §30 の実装。B28 と同じ XApplication の登録ブロックへの追加で足りる:
+
+1. `XApplication.onCreate` の patch override 登録ブロック（B3 / B28 の箇所）で、B28 のブロックの直後・NewXUtils.initialize の直前に、同一形式で `android_composer_boost_upsell_enabled` = false の登録を1ブロック追加する（const-string でキー、const/4 で false、registerPatchOverride 呼び出しの3命令。ブロック自身が使うレジスタは後続の元コードが読み取り前に再定義するものだけに限る）
+2. このフラグの読み手はコンポーザーのブースト状態機械（classes13）の表示決定点ただ1箇所であり、false はコード既定値のため副作用は当該アップセルの抑止に限られる。自分の投稿の「ブースト」ボタン等の同名に近い面は**別フラグ群**（`android_tweet_promote_button_boost_cta_*`）であり、本手順では対象にしない（SPEC §30）
+
+検証: classes18 は施工前に無変更再アセンブルが母体とビット一致することを確認する。XApplication の全メソッドに対してレジスタ型ゲートを実行し PASS を確認する。陽性対照として、新しい classes18 にフラグ文字列が1件存在することを確認する
 
 ## 手順 C — 再署名
 
