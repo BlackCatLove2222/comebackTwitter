@@ -107,6 +107,15 @@ Z12 のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B2
 - **MuteCategoryStore.java**: プリセット5カテゴリ（ニュース / 政治系 / 荒らし / 晒し系 / 炎上系）のシード定義そのものを含む保存層。二層構造（同梱シード → 永続 JSON `newx.content.mute_categories`）、NFKC＋小文字化の部分文字列マッチで一致語を返し、理由 `MUTE_CAT_<ID>:<一致語>` の記録に使う。晒し系にはコード固定の個人情報パターン検出（電話番号形式／〒郵便番号／住所ヒューリスティクス）がサブトグル付きで入っています
 - 設定 UI のセクション（MuteCategorySettingsSection）と判定の組み込み（NewXTimelineFilter / FilterConfig / FilteredRepliesDialog の変更）は同梱しません — 手順と要点は BUILD.md B27 を参照
 
+## BannerUi.java / SentBanner.smali / SentBanner$k.smali / SentBanner$Fin.smali — jp24.13.5 送信完了バナー
+
+送信完了表示のクラシック化（[../SPEC.md](../SPEC.md) §29、[../BUILD.md](../BUILD.md) B31）の実物です。配置先は **classes6.dex**、パッケージ `piko/jp135`。
+
+- **BannerUi.java**: 表示実体。Activity の decorView に載せる通常の View（LinearLayout）で、淡青背景 `#E8F5FE`・角丸 14dp、コード描画の Drawable（塗り円 `#1DA1F2` ＋白チェック）、文字 `#14171A` 15sp、ボタンなし。表示 3,000ms、出現フェード＋スライド 220ms。全エントリポイントがフェイルセーフ（失敗時は完了コールバックだけを返す）で、コールバックは必ずメインスレッド投稿経由で非同期に届く。コンパイルは Arc と同じ作法（`javac -source 8 -target 8` → `d8 --min-api 29` → smali 化）
+- **SentBanner.smali**: 提示役 `com/x/composer/upload/v2/notifications/n` のネイティブ提示と**同一の suspend 契約**を実装する手書きグルー。Activity（`attach` で WeakReference 保持。供給は jp15 の `Arc.attach` への転送1命令）と表示文言が取れれば BannerUi で表示し、いずれか欠ければ**ネイティブ提示 `n.e` に委譲**する。表示中の追加送信は即 AutoDismiss で完了
+- **SentBanner$k.smali**: 上記の継続状態マシン（ContinuationImpl）。**SentBanner$Fin.smali**: 終了コード（タップ = MessageClick／その他 = AutoDismiss）の受け渡し用ホルダ
+- フックは2点のみ: 提示役 `n.c` 内の提示呼び出し1命令の差し替えと、`Arc.attach` への転送追加（手順は BUILD.md B31）。結果処理は提示役本来の分岐が担うため、タップ時の詳細遷移はネイティブと同一です
+
 ## 同梱していないもの
 
 - **更新音ヘルパー（`Lpiko/jp8/Snd;`）**: 音源（Twitter 8.65 の `psst2.ogg` / `pop.ogg`）をバイト配列として埋め込む設計のため、音源の権利の関係でソース・バイナリとも同梱しません。再現方法は [../BUILD.md](../BUILD.md) の手順 B9 を参照してください（構造は単純で、SoundPool で2音を状態エッジで鳴らすだけです）
