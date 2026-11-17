@@ -1,6 +1,6 @@
 # BUILD — 適用・ビルド手順
 
-comebackTwitter の jp23 仕様を再現する手順です。全体は2段階:
+comebackTwitter の jp24.13.3 仕様を再現する手順です。全体は2段階:
 
 - **手順 A（バンドルで完結）**: Morphe でパッチバンドルを当てる。日本語化と基本構成はここまでで入る
 - **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp23 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形、B15 は一部がバンドル表現可能。B17 は任意の上級手順）
@@ -238,6 +238,61 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 2. 選択時: `res/drawable/ic_vector_chat.xml` の pathData を自作の塗り封筒（[src/DmIconEnvelope.xml](src/DmIconEnvelope.xml)）に差し替える。AXML の編集は文字列プールの再構築による外科編集で行い、他チャンクはバイト不変に保つ。編集後は aapt2 dump xmltree で新しい pathData が読めることを確認する
 3. 封筒ベクターは事前に描画して形を確認する（外形が email_stroke と揃っていること、フラップの V 字グルーヴが抜けていること）
 
+### B23. ゾンビフィルター: スレッド主の記録ゲート修正（jp24.7、classes19）
+
+スレッド主自身の返信が Z2 等で誤って隠れる不具合の修正（[SPEC.md](SPEC.md) §18）。
+
+1. 原因: スレッド主の記録は会話経路で開いた場合にしか行われず、別経路で開いたスレッドでは「スレッド主の返信」免除が効かなかった
+2. 修正: `NewXTimelineFilter.filterItem` の記録ゲートを `zombieThread || (verified 設定 && (filterTimeline || filterThread))` に拡張する**分岐命令1つの挿入**のみ（既存のチェック直後に条件分岐を1つ追加）。ゲートが偽の全ケースでは従来と同一動作になること、差分が当該ファイルの当該メソッドだけであることを確認する
+
+### B24. ゾンビフィルター: Z11' 外国語ベイト（jp24.8 / jp24.9、classes19 / classes21）
+
+1. 拡張ソースに判定 `ZombieFilter.isForeignBait`（[src/ZombieFilter.java](src/ZombieFilter.java)）と設定キー `foreign_bait`（[src/ZombieSettings.java](src/ZombieSettings.java)）を追加し、グルー `JpForeignBaitCheck`（[src/JpForeignBaitCheck.java](src/JpForeignBaitCheck.java)）を新規クラスとして classes21 に追加する
+2. 評価器 `evaluateZombieReply` の所定位置（Z8 の後段）へ、グルー呼び出しの invoke を外科的に挿入する。**引数に渡す FilteredRepliesStore は、挿入地点で実際に store を保持しているレジスタから読むこと** — jp24.8 では前段ブロックが boolean に再利用済みのレジスタを store として渡し、VerifyError で起動不能になった。jp24.9 の納品形（退避先レジスタから死にレジスタへ移してから呼ぶ）を正とする
+3. 施工後は必ず**レジスタ型ゲート**（「検証の作法」参照）を最終 dex に実行し、違反ゼロを確認する
+
+### B25. ゾンビフィルター: Z12 同じ投稿への2回目リプライ＋上部バー常時表示（jp24.10、classes19 / classes21 / classes.dex）
+
+1. Z12: グルー `JpDoubleReplyCheck`（[src/JpDoubleReplyCheck.java](src/JpDoubleReplyCheck.java)）を classes21 に新規追加し、設定キー `double_reply` を ZombieSettings に追加する。評価器への挿入は Z11' の直後（B24 と同じ外科方式＋レジスタ型ゲート必須）
+2. 上部バー: classes.dex の `Landroidx/compose/material3/zf;->b(F)V` を「引数を無視して対象フィールドへ常に 0.0f を書く」実装に書き換える（[SPEC.md](SPEC.md) §23）。再アセンブルの往復差分で、実質差分が当該メソッドのみであることを確認する。※ 本手順の dex は jp24.10 の APK には含めず、jp24.11（B26 の施工時）に初めて統合した経緯がある。現行仕様としては B26 以降のビルドに含まれる
+
+### B26. 指定アカウント非表示（jp24.11 / jp24.12、classes19 / classes21）
+
+[SPEC.md](SPEC.md) §24 の実装。サーバーには一切触れない（ブロック API の呼び出しを入れないこと）。
+
+1. 拡張ソースに `BlockedAuthorsStore`（[src/BlockedAuthorsStore.java](src/BlockedAuthorsStore.java)）を新規追加する。**シードは各自の対象リストで置き換える**（本リポジトリ同梱版は空）。ZombieFilter に理由定数 `BLOCKED_AUTHOR`、ZombieSettings にトグルキー `blocked_authors`、FilterConfig にスナップショット＋規則ビット 0x200 を追加する
+2. 会話経路: `evaluateZombieReply` 内の除外条件（フォーカル／スレッド主／自スレッド返信）の後・Z1 の前に指定著者チェックを挿入する。**指定リストはホワイトリストより優先**させる。ゾンビマスター OFF でも効くよう、会話モジュールでは独立の評価（`evaluateBlockedReply`）も用意する
+3. TL 経路: モジュールの子投稿（filterModule）とモジュール直下（filterModuleItem）に著者チェックを追加する。対象は直接の著者に加え引用元・リポスト元の著者。⚠ filterModuleItem 側は、挿入ブロックが使うレジスタが引数シャッフルで上書きされた後の値になっていないか必ず確認すること（jp24.11〜24.12 ではこのブロックがデッドコード化していたのを jp24.13 で発見・修正した）
+4. 素のトップレベル投稿（jp24.12）: パス開始時に会話モジュールの entryId から会話ルート投稿 ID の集合を集めるヘルパー（`noteConversationRoots`、ThreadLocal 保持）を追加し、素の投稿には「会話ルート集合に含まれる投稿と文脈不明時は免除、それ以外は著者チェック」という形でチェックを入れる（フォーカル免除とセットでなければプロフィール対応にならない）
+5. 本体（NewXTimelineFilter）はパッチ注入ブリッジを含むため丸ごと差し替え禁止。新規ヘルパーの追加移植＋挿入箇所の外科編集で施工し、レジスタ型ゲートと相互参照監査を行う
+
+### B27. カテゴリ別ミュート（jp24.13 / jp24.13.1、classes19 / classes21）
+
+[SPEC.md](SPEC.md) §25 の実装。
+
+1. 拡張ソースに `MuteCategory` / `MuteCategoryStore`（[src/](src/) の同名 .java、プリセット5カテゴリのシード定義を含む）と設定 UI セクション（MuteCategorySettingsSection）を新規追加し、投稿フィルター画面のゾンビセクション直下に組み込む
+2. 判定は filterModule / filterModuleItem / filterObject の層（指定アカウント判定と同じ層）で行い、ヒット時は理由 `MUTE_CAT_<ID>:<一致語>` を必ず FilteredRepliesStore に記録する。FilterConfig にはスナップショットフィールドと sameAs への同一性チェックを追加する（外科的 smali 編集）
+3. ⚠ **sameAs 編集時の罠（jp24.13 初版の事故）**: 既存ブロックには引数レジスタを使い捨てにする比較（結果を boolean で受け直す）が含まれ得る。その後ろへ新しい同一性チェックを挿入すると、フィールドアクセスの対象が boolean 化したレジスタになって VerifyError になる。挿入前に各ブロックのレジスタ再定義を精査し、使い捨て先は死にレジスタへ逃がすこと。施工後は拡張済みレジスタ型ゲートで**変更した全クラスの全メソッド**を走査する（jp24.13.1 の納品条件）
+4. 「フィルタされた返信」ダイアログには理由行が無かったため、理由表示そのものを追加する（ゾンビ系ラベル＋指定アカウント＋カテゴリ「名前」：単語 の形式）
+
+### B28. 通知許可プロンプトの抑止（jp24.13.2、classes18）
+
+[SPEC.md](SPEC.md) §26 の実装。B3 と同じ XApplication の登録ブロックへの追加で足りる:
+
+1. `XApplication.onCreate` の patch override 登録ブロック（B3 の箇所）に、同一形式で `x_lite_notifications_permission_prompt_enabled` = false の登録を1ブロック追加する（const-string でキー、const/4 で false、registerPatchOverride 呼び出しの3命令。ブロック自身が使うレジスタは後続の元コードが読み取り前に再定義するものだけに限る）
+2. jp2 由来のシード2件（fullscreen 変種用／設定コールアウト用）は表示可否を決めないため、本手順の代替にはならない。決定者の第一ゲートであるマスタースイッチを固定するのが要点
+
+### B29. 設定への到達性（jp24.13.3、classes17 / classes20 / classes21）
+
+[SPEC.md](SPEC.md) §27 の実装。
+
+1. **スクロール修正（classes21、PostFilterFragment.onCreateView の2箇所のみ）**: (a) content の LinearLayout を ScrollView で包む（root の FrameLayout → ScrollView → content）。(b) ルール一覧コンテナの LayoutParams を weight 方式から**高さ固定 400dp**（Theme.dpToPx 経由）に変える — ScrollView 内では weight が潰れるため、一覧は枠内で内部スクロールさせる。マスタースイッチ／各セクション／空状態／＋ボタン（root へのオーバーレイ）の配線は変えない
+2. **ドロワー入口（3 dex 協調、いずれも既存パターンの複製）**:
+   - classes17: ドロワー合成（`com/x/main/drawer/k` の invoke）にある Piko設定行の注入ブロックの**直後**に、同形式の第2ブロックを挿入する。タイトル／クリックのプロバイダだけを差し替え、アイコン・レジスタ窓・スキップ先は同一にする（既存項目の並び替えはしない）
+   - classes21: ComposeSettingsHook にタイトル供給（画面タイトル文字列 `piko_newx_post_filtering_title` を返す）とクリックハンドラを追加する。ハンドラは設定 Activity への Intent に extra `piko_newx.open_screen` = `newx.content.post_filtering` を付けて起動する
+   - classes20: 設定 Activity（PikoSettingsActivity）の onCreate の新規作成パスで extra を消費し、正規遷移（openScreen）と同形のトランザクション（対象 Fragment の反射生成 → replace → addToBackStack → commit、フッター非表示を含む）を実行する。失敗時は捕捉してルート一覧表示にフォールバックし、再生成時は発火させない
+3. 表示ゲートは Piko設定行のトグルと共通になる（仕様として受容済み）
+
 ## 手順 C — 再署名
 
 1. `zipalign -p 4` で整列
@@ -248,6 +303,7 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 
 - 施工前の dex は、無変更で再構築するとバイト一致すること（ラウンドトリップ再現性）を先に確認してから編集する。再現しない dex（ツールチェーン製法が違うもの）は全面再構築を避け、B11 のような最小バイナリパッチに切り替える
 - **ブリッジ走査（jp24.5 で必須化）**: 拡張クラスの本体を差し替える前に、出荷バイナリで「実処理＋ `unpatchedBridge` の throw」を両方含むメソッドを洗い出す。該当クラスはメソッド単位のトランスプラントか smali 直接編集のみで触り、差し替え後にブリッジの実処理が残っていることを確認する。メソッド集合・署名・アクセスフラグの一致だけでは不十分
+- **レジスタ型ゲート（jp24.9 で新設・jp24.13.1 で拡張、必須）**: 既存メソッドへ invoke を挿入したり引数レジスタに触れたりしたら、最終 dex に対してレジスタ型検査（smali の抽象解釈で、invoke 引数および iget / iput / aget / aput / array-length / instance-of / monitor / throw / check-cast のオブジェクトレジスタについて、合流点での型カテゴリ衝突を検出する）を実行し、違反ゼロを確認する。検査は名前が一致する**全メソッド**を対象にする（ブリッジ合成メソッドだけを掴んで「PASS」にしない）。jp24.8（挿入レジスタの型競合）と jp24.13（引数レジスタの使い捨て再定義）の2度の VerifyError 事故を受けた必須工程で、両事故の壊れたコードに対して ART と同一の指摘で FAIL することを確認済み
 - 分岐や goto を含むメソッドを編集したら、レジスタ生存性スキャンを行い、合流点で未定義のレジスタが無いことを確認する（B17 の教訓）
 - ファミリー差し替え後は、全クラス相互参照監査でベースライン比の新規欠落ゼロを確認する
 - 各段階で、前段の APK との zip エントリ差分（CRC 比較）が「意図したエントリだけ」であることを assert する
