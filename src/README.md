@@ -93,9 +93,11 @@ Z11'（日本語を含まない外国語返信）のグルー（[../SPEC.md](../
 
 Z12 のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B25）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/timeline/JpDoubleReplyCheck;`。会話ルートごとに表示順のノートログ {postId, authorId, parentId} を保持し（再ノート時はその地点まで切り詰める Z8 と同じ再生意味論）、同一著者の同一親投稿への直接リプライが2回目以降なら DOUBLE_REPLY を返す。ルート投稿へのリプライ（Z8 の領域）・自分の投稿へのリプライ（セルフチェーン）・親著者不明時は対象外（フェイルオープン）。
 
-## BlockedAuthorsStore.java — jp24.11 / jp24.12 指定アカウント非表示
+## BlockedAuthorsStore.java — jp24.11 / jp24.12 / jp24.13.17 指定アカウント非表示
 
 指定アカウントの著者 ID リストの保存層（[../SPEC.md](../SPEC.md) §24、[../BUILD.md](../BUILD.md) B26）。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/BlockedAuthorsStore;`。照合は数値 ID のみ（ハンドル名は変わり得るため使わない）。同梱定数 → 永続セットへの初回だけのシードと、ユーザー編集は永続層のみという二層構造です。
+
+jp24.13.17 で設定画面の ID エディタ（[../SPEC.md](../SPEC.md) §41、[../BUILD.md](../BUILD.md) B43）向けに `normalizeIdInput` / `idInputError`（数値のみ・19桁まで・先行ゼロ正規化・全ゼロ不可）と、JSON バンドル取り込み用の `replaceAll`（SEEDED フラグを必ず立てるため、初回起動前でも同梱シードが混入しない）が加わりました。
 
 ⚠ **本リポジトリ同梱版のシードは空です**（作者個人の対象リストは配布しません）。自分のビルドでは `defaultIds()` に隠したいアカウントの数値 ID を自分で追加してください。判定・記録側（NewXTimelineFilter への外科挿入、理由 BLOCKED_AUTHOR、ホワイトリストより優先、会話ルート免除）は BUILD.md B26 が正です。
 
@@ -104,7 +106,9 @@ Z12 のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B2
 カテゴリ別ミュート（[../SPEC.md](../SPEC.md) §25、[../BUILD.md](../BUILD.md) B27）のデータクラスと保存層の全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/` 配下。
 
 - **MuteCategory.java**: カテゴリ1件分の定義（有効フラグ、対象フィールド4種＝本文／引用／@ID／表示名、晒し検出サブトグル、単語リスト）
-- **MuteCategoryStore.java**: プリセット5カテゴリ（ニュース / 政治系 / 荒らし / 晒し系 / 炎上系）のシード定義そのものを含む保存層。二層構造（同梱シード → 永続 JSON `newx.content.mute_categories`）、NFKC＋小文字化の部分文字列マッチで一致語を返し、理由 `MUTE_CAT_<ID>:<一致語>` の記録に使う。晒し系にはコード固定の個人情報パターン検出（電話番号形式／〒郵便番号／住所ヒューリスティクス）がサブトグル付きで入っています
+- **MuteCategoryStore.java**: プリセットのシード定義そのものを含む保存層。二層構造（同梱シード → 永続 JSON `newx.content.mute_categories`）、NFKC＋小文字化の部分文字列マッチで一致語を返し、理由 `MUTE_CAT_<ID>:<一致語>` の記録に使う。晒し系にはコード固定の個人情報パターン検出（電話番号形式／〒郵便番号／住所ヒューリスティクス）がサブトグル付きで入っています
+  - プリセットは jp24.13 時点の5カテゴリ（ニュース / 政治系 / 荒らし / 晒し系 / 炎上系）から、jp24.13.12 で ジェンダー・男女論 / 水商売 / 日韓・日中対立（[../SPEC.md](../SPEC.md) §36、[../BUILD.md](../BUILD.md) B38）、jp24.13.13 で 宗教・移民 と既存プリセットの多言語種拡張（§37、B39）、jp24.13.14 で 地域・原発（§38、B40）、jp24.13.15 で ジェンダー種に「男女分断」（§39、B41）、jp24.13.16 で 誘導・釣り（§40、B42）が加わり、**全11カテゴリ**になりました。追加は append-missing 移行（ユーザーが編集したリストは一切触らない）で、種拡張は「旧種と完全一致する場合のみ置き換える」ルールです
+  - jp24.13.16 で照合対象に**展開URL**（本文・引用の expandedUrl / displayUrl）が加わりました（`Snapshot.findMatch` の6引数版。本文テキストには t.co しか入っていないため、リンク先ドメインでの照合は URL エンティティ経由でしか成立しません）。晒し検出器は URL には適用しません
 - 設定 UI のセクション（MuteCategorySettingsSection）と判定の組み込み（NewXTimelineFilter / FilterConfig / FilteredRepliesDialog の変更）は同梱しません — 手順と要点は BUILD.md B27 を参照
 
 ## BannerUi.java / SentBanner.smali / SentBanner$k.smali / SentBanner$Fin.smali — jp24.13.5 送信完了バナー
@@ -115,6 +119,28 @@ Z12 のグルー（[../SPEC.md](../SPEC.md) §18、[../BUILD.md](../BUILD.md) B2
 - **SentBanner.smali**: 提示役 `com/x/composer/upload/v2/notifications/n` のネイティブ提示と**同一の suspend 契約**を実装する手書きグルー。Activity（`attach` で WeakReference 保持。供給は jp15 の `Arc.attach` への転送1命令）と表示文言が取れれば BannerUi で表示し、いずれか欠ければ**ネイティブ提示 `n.e` に委譲**する。表示中の追加送信は即 AutoDismiss で完了
 - **SentBanner$k.smali**: 上記の継続状態マシン（ContinuationImpl）。**SentBanner$Fin.smali**: 終了コード（タップ = MessageClick／その他 = AutoDismiss）の受け渡し用ホルダ
 - フックは2点のみ: 提示役 `n.c` 内の提示呼び出し1命令の差し替えと、`Arc.attach` への転送追加（手順は BUILD.md B31）。結果処理は提示役本来の分岐が担うため、タップ時の詳細遷移はネイティブと同一です
+
+## RecommendKeepGate.java / RecommendKeepStore.java / RecommendKeepSettingsSection.java — jp24.13.9〜13.19 おすすめキープフィルター
+
+フォロー外のおすすめ投稿を「興味カテゴリ（技術系 / 動物 / 条件付きコスプレ）に合うものだけ残す」キープフィルター（[../SPEC.md](../SPEC.md) §33、[../BUILD.md](../BUILD.md) B35）の拡張側3クラスの全文。配置先は **classes21.dex**。
+
+- **RecommendKeepGate.java**（`timeline/`）: 判定役。対象タイプは FOR_YOU / EXPLORE_FOR_YOU のみ。フォロー中応答から著者 ID を収穫してキャッシュし（上限 5,000 件、期限なし）、分類は「友情フラグ OR キャッシュ」の OR 意味論。コスプレは地域信号（言語フィールド→文字種の順）＋メディア必須＋除外語なし＋**割合キャップ**（jp24.13.10、§34、B36。既定 20%＝キープ5件に1件まで、0% で全落とし `REC_KEEP_COS_RATIO`）。jp24.13.18 の診断修正（§42、B44）後は「著者 ID が収穫できたこと」自体を診断のヒットとし、jp24.13.19（§43、B45）ではページ単位プリスキャン `hasFollowedSignal` が「フォロー済み著者が1人もいないページは丸ごと素通し（記録も書かない）」を担います
+- **RecommendKeepStore.java**（`postfilter/`）: 保存層（永続 JSON `newx.content.recommend_keep`、schema 3）。語句マッチは jp24.13.11 以降、純 ASCII 語句に**単語境界**を要求します（§35、B37。「AI」は種からも削除）。割合の台帳は別文書。診断カウンタの更新は `recordHarvestSamples` に集約され、TRUSTED / DEAD 到達後は単調（巻き戻しなし）。jp24.13.17 では JSON バンドル用の投影エクスポート `exportProjection()`（カテゴリ・除外語・オプションのみ。**フォローキャッシュと診断状態は含めない**）が加わりました
+- **RecommendKeepSettingsSection.java**（`postfilter/`）: 設定セクション（マスター、カテゴリ別 ON/OFF と語句編集、フォロワー数しきい値、コスプレ割合上限、診断状態の表示とリセット）。「ツイートフィルター」画面への組み込みは PostFilterFragment 側の変更で、同梱しません
+- 判定の入口（classes19 `NewXTimelineFilter.filterExploreItems` への外科挿入、著者までの5段ナビゲーション用ブリッジ `TimelineModelAccess` の追加分）は同梱しません — 手順と要点は BUILD.md B35 を参照
+- ⚠ 正直な限界: フォローキャッシュは**アカウント非分離の和集合**です（表示中アカウントの情報はフィルタ層に届きません）。フォロー済み著者が1人も含まれないページは無条件で素通しになります（13.19 のトレードオフ）
+
+## TypeaheadAuthorFilter.java — jp24.13.15 検索候補の指定アカウント非表示
+
+検索候補（タイプアヘッド）から指定アカウントを除去するヘルパー（[../SPEC.md](../SPEC.md) §39、[../BUILD.md](../BUILD.md) B41）の全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/TypeaheadAuthorFilter;`。判定材料は既存のものだけ（トグル `newx.content.zombie_filtering.blocked_authors` と `BlockedAuthorsStore` のスナップショット）で、新規設定・新規保存領域はありません。フックは X 本体側 classes6 のタイプアヘッド集約リポジトリの成功出口4点への2命令挿入（手順は B41）で、対象は検索サジェスト・@メンション補完・DM 宛先検索・支払いピッカー等の**全候補面**です（ハッシュタグ候補は無改変）。全体が try/catch でフェイルオープンし、該当なし・トグル OFF のときは入力と同一の List オブジェクトを返します。候補の非表示は記録しません。
+
+## FilterBundleImportExport.java — jp24.13.17 フィルター設定の JSON 入出力
+
+ツイートフィルター設定の JSON バンドル（`{"format":"comebacktwitter-filter-bundle","version":1}`）入出力（[../SPEC.md](../SPEC.md) §41、[../BUILD.md](../BUILD.md) B43）の全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/postfilter/FilterBundleImportExport;`。
+
+- エクスポート対象は muteCategories / keywordRules / recommendKeep（投影のみ）の3セクション。**blockedAuthors はエクスポートに決して含めません**（プライバシー上の決定。インポート側は手書きファイルの blockedAuthors セクションを受け付け、無効エントリは件数報告付きでスキップします）
+- インポートは2段階（全セクション検証 → 有効なものだけ適用）。muteCategories は全置換＋欠けたプリセットの既定値補完で、検証時に `preset` フラグと晒し検出器の付け替え（なりすまし）を強制補正します
+- ファイル／クリップボードの両経路、結果ダイアログ、画面側の配線（ボタン配置・onActivityResult チェーン・onResume 再構築）は同梱しません — 手順は BUILD.md B43 を参照
 
 ## 同梱していないもの
 

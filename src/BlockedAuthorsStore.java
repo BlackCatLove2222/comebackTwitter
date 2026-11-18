@@ -1,5 +1,6 @@
 package app.morphe.extension.newx.postfilter;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -83,6 +84,78 @@ public final class BlockedAuthorsStore {
 
     public static String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    /**
+     * JP jp24.13.17: replaces the whole designated set (filter-bundle
+     * import). Entries are normalized defensively; invalid ones are
+     * dropped. Always raises the SEEDED flag: on a fresh install whose
+     * first snapshot() has not run yet, seeding would otherwise merge
+     * the bundled defaults into the imported list on next launch.
+     */
+    public void replaceAll(Collection<String> authorIds) {
+        Set<String> updated = new LinkedHashSet<>();
+        if (authorIds != null) {
+            for (String authorId : authorIds) {
+                String normalized = normalize(authorId);
+                if (!normalized.isEmpty()) {
+                    updated.add(normalized);
+                }
+            }
+        }
+        setting().save(Collections.unmodifiableSet(updated));
+        Holder.SEEDED.save(true);
+    }
+
+    /**
+     * JP jp24.13.17: validates one designated-author ID as typed into
+     * the settings editor or read from an imported bundle. Returns the
+     * normalized ID, or null when invalid. Rules: digits only, 1–19
+     * digits as entered, leading zeros stripped (matching is string
+     * equality, so "00123" and "123" must collapse to one entry), and
+     * an all-zero value is not an ID.
+     */
+    public static String normalizeIdInput(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 19) {
+            return null;
+        }
+        for (int index = 0; index < trimmed.length(); index++) {
+            char c = trimmed.charAt(index);
+            if (c < '0' || c > '9') {
+                return null;
+            }
+        }
+        int start = 0;
+        while (start < trimmed.length() - 1 && trimmed.charAt(start) == '0') {
+            start++;
+        }
+        String normalized = trimmed.substring(start);
+        return normalized.equals("0") ? null : normalized;
+    }
+
+    /** JP jp24.13.17: Japanese editor message for an invalid ID input, or null when valid. */
+    public static String idInputError(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return "IDを入力してください";
+        }
+        String trimmed = raw.trim();
+        for (int index = 0; index < trimmed.length(); index++) {
+            char c = trimmed.charAt(index);
+            if (c < '0' || c > '9') {
+                return "数値IDのみ入力できます（@名は使えません）";
+            }
+        }
+        if (trimmed.length() > 19) {
+            return "IDが長すぎます（19桁まで）";
+        }
+        if (normalizeIdInput(trimmed) == null) {
+            return "IDが正しくありません";
+        }
+        return null;
     }
 
     private void seedDefaultsOnce() {

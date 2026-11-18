@@ -44,6 +44,12 @@ public final class MuteCategoryStore {
     public static final String ID_TROLL = "troll";
     public static final String ID_SARASHI = "sarashi";
     public static final String ID_ENJOU = "enjou";
+    public static final String ID_GENDER = "gender";
+    public static final String ID_NIGHTWORK = "nightwork";
+    public static final String ID_INTLFEUD = "intlfeud";
+    public static final String ID_RELIGION = "religion";
+    public static final String ID_REGIONAL = "regional";
+    public static final String ID_BAIT = "bait";
 
     public static final String REASON_PREFIX = "MUTE_CAT_";
     public static final String REASON_CUSTOM = "MUTE_CAT_CUSTOM";
@@ -173,6 +179,20 @@ public final class MuteCategoryStore {
             }
             return null;
         }
+
+        /** First phrase occurring in any of {@code texts} (jp24.13.16: link URLs). */
+        String findInAny(List<String> texts) {
+            if (texts == null || texts.isEmpty()) {
+                return null;
+            }
+            for (String text : texts) {
+                String phrase = findIn(text);
+                if (phrase != null) {
+                    return phrase;
+                }
+            }
+            return null;
+        }
     }
 
     /** Immutable view of the store; identity changes whenever the store changes. */
@@ -258,6 +278,21 @@ public final class MuteCategoryStore {
          */
         public Match findMatch(
                 String content, String quoted, String screenName, String displayName) {
+            return findMatch(content, quoted, screenName, displayName, null, null);
+        }
+
+        /**
+         * JP jp24.13.16: as {@link #findMatch(String, String, String, String)},
+         * plus link-URL matching. The body text carries only t.co-wrapped
+         * URLs, so the category vocabulary is also scanned against the
+         * post's expanded link URLs under the content scope, and against
+         * the quoted post's expanded URLs under the quoted scope (each
+         * right after its scope's text). A URL hit records the matched
+         * vocabulary word (typically a shortener domain) as the phrase.
+         */
+        public Match findMatch(
+                String content, String quoted, String screenName, String displayName,
+                List<String> contentUrls, List<String> quotedUrls) {
             for (CategoryMatcher matcher : matchers) {
                 MuteCategory category = matcher.category;
                 if (!category.enabled) {
@@ -266,9 +301,15 @@ public final class MuteCategoryStore {
                 String phrase = null;
                 if (category.matchContent) {
                     phrase = matcher.findIn(content);
+                    if (phrase == null) {
+                        phrase = matcher.findInAny(contentUrls);
+                    }
                 }
                 if (phrase == null && category.matchQuoted) {
                     phrase = matcher.findIn(quoted);
+                    if (phrase == null) {
+                        phrase = matcher.findInAny(quotedUrls);
+                    }
                 }
                 if (phrase == null && category.matchDisplayName) {
                     phrase = matcher.findIn(displayName);
@@ -350,7 +391,167 @@ public final class MuteCategoryStore {
                 Arrays.asList(
                         "大炎上", "謝罪動画", "謝罪文",
                         "炎上", "騒動", "不祥事")));
+        // jp24.13.12: gender-discourse preset. Quoted scope matters here —
+        // these posts are typically quote-posts whose own text is innocuous.
+        // jp24.13.13: seed extended with sexual-violence terms and English
+        // equivalents (overseas posts arrive untranslated). Matching is
+        // substring-based, so "rape" also fires inside "grape"/"drape" —
+        // accepted trade-off, per the user's explicit direction.
+        // jp24.13.15: seed extended with 男女分断 (gender-division bait
+        // phrasing seen on device, 2026-11-18).
+        presets.add(new MuteCategory(ID_GENDER, "ジェンダー・男女論", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "フェミニスト", "フェミ", "ツイフェミ", "ミソジニー", "ミサンドリー",
+                        "男女論", "男女分断", "女尊男卑", "男尊女卑", "弱者男性", "弱男",
+                        "不同意性交", "ジェンダー", "ジェンダーギャップ",
+                        "男性差別", "女性差別", "痴漢冤罪", "性加害",
+                        "レイプ", "強姦", "性暴力", "性的暴行", "輪姦",
+                        "盗撮", "セクハラ", "痴漢", "性被害",
+                        "feminist", "feminism", "misogyny", "misandry", "gender war",
+                        "rape", "sexual assault", "sexual violence")));
+        // jp24.13.12: nightlife-work preset. Bare ホスト is deliberately NOT
+        // seeded — it false-positives on ホストコンピュータ and event hosts;
+        // the seeded compounds (ホストクラブ / 担当ホスト) carry the signal.
+        presets.add(new MuteCategory(ID_NIGHTWORK, "水商売", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "水商売", "夜職", "夜職女子", "夜のお仕事",
+                        "キャバクラ", "キャバ嬢", "ホストクラブ", "担当ホスト", "初回指名",
+                        "シャンパンタワー", "オリシャン", "同伴出勤", "体入", "体験入店",
+                        "ガールズバー", "ラウンジ嬢",
+                        "風俗", "デリヘル", "ソープランド", "メンエス", "売掛",
+                        "host club", "cabaret")));
+        // jp24.13.12: Japan–Korea / Japan–China feud preset. Bare 韓国 /
+        // 中国 / 朝鮮 are deliberately NOT seeded — they would nuke benign
+        // food and travel posts; the list targets fight-specific vocabulary.
+        presets.add(new MuteCategory(ID_INTLFEUD, "日韓・日中対立", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "反日", "反韓", "反中", "嫌韓", "嫌日", "ヘイトスピーチ",
+                        "竹島", "独島", "慰安婦", "徴用工", "旭日旗", "在日",
+                        "チョン", "ジャップ", "支那",
+                        "尖閣", "釣魚島", "南京事件", "歴史認識",
+                        "韓国併合", "植民地支配", "日韓断交",
+                        "ネトウヨ", "パヨク", "売国奴",
+                        "comfort women", "dokdo", "takeshima",
+                        "anti-japanese", "anti-korean",
+                        "반일", "혐한", "혐일", "위안부", "독도",
+                        "抗日", "仇日", "小日本", "日本鬼子", "慰安妇")));
+        // jp24.13.13: religion / immigration-grievance preset. The seed
+        // deliberately includes ハラール / halal, so benign halal-food posts
+        // match too — accepted trade-off (same call as the gender seed's
+        // substring "rape").
+        presets.add(new MuteCategory(ID_RELIGION, "宗教・移民", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "イスラム", "ムスリム", "ヒジャブ", "ブルカ", "モスク",
+                        "土葬", "ハラール", "クルド人",
+                        "移民政策", "移民受け入れ", "不法移民", "不法滞在",
+                        "外国人優遇", "外国人犯罪", "移民反対",
+                        "islam", "muslim", "hijab", "burqa", "mosque", "halal",
+                        "illegal immigrant", "immigrant", "immigration", "kurd")));
+        // jp24.13.14: regional / nuclear-power feud preset. The seed
+        // deliberately includes neutral technical terms (原発 / 処理水 /
+        // 再稼働), so straight news and informational posts about nuclear
+        // power match too — the user asked for the whole topic gone.
+        presets.add(new MuteCategory(ID_REGIONAL, "地域・原発", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "放射能", "汚染水", "処理水", "風評被害", "被曝",
+                        "メルトダウン", "放射脳", "原発", "原発推進", "反原発",
+                        "脱原発", "再稼働")));
+        // jp24.13.16: engagement-bait / short-link preset. The phrases are
+        // the classic "full video here" lures; the domains are known URL
+        // shorteners, matched against the EXPANDED link URLs (the body
+        // text only ever carries the t.co form). Longer phrases precede
+        // フル動画 so the recorded reason names the specific lure. Note:
+        // bit.ly and friends are also used by legitimate accounts — the
+        // vocabulary stays user-editable like every preset.
+        presets.add(new MuteCategory(ID_BAIT, "誘導・釣り", true, true,
+                true, true, false, false, false, false,
+                Arrays.asList(
+                        "フル動画はこちら", "フル動画はプロフ", "続きはプロフ", "プロフに続き",
+                        "動画の続きはこちら", "フル動画",
+                        "b-short.link", "bit.ly", "tinyurl.com", "cutt.ly",
+                        "is.gd", "rb.gy", "rebrand.ly", "shorturl.at")));
         return presets;
+    }
+
+    /**
+     * The jp24.13.12 seed vocabulary of the three presets whose seeds grew
+     * in jp24.13.13. The upgrade migration compares a stored preset's
+     * phrases against these lists: an exact match means the user never
+     * edited the seed, so it is upgraded to the current seed; any edit
+     * (addition, removal, reordering) leaves the stored list untouched.
+     */
+    private static final List<String> SEED_13_12_GENDER = Arrays.asList(
+            "フェミニスト", "フェミ", "ツイフェミ", "ミソジニー", "ミサンドリー",
+            "男女論", "女尊男卑", "男尊女卑", "弱者男性", "弱男",
+            "不同意性交", "ジェンダー", "ジェンダーギャップ",
+            "男性差別", "女性差別", "痴漢冤罪", "性加害");
+
+    private static final List<String> SEED_13_12_NIGHTWORK = Arrays.asList(
+            "水商売", "夜職", "夜職女子", "夜のお仕事",
+            "キャバクラ", "キャバ嬢", "ホストクラブ", "担当ホスト", "初回指名",
+            "シャンパンタワー", "オリシャン", "同伴出勤", "体入", "体験入店",
+            "ガールズバー", "ラウンジ嬢",
+            "風俗", "デリヘル", "ソープランド", "メンエス", "売掛");
+
+    private static final List<String> SEED_13_12_INTLFEUD = Arrays.asList(
+            "反日", "反韓", "反中", "嫌韓", "嫌日", "ヘイトスピーチ",
+            "竹島", "独島", "慰安婦", "徴用工", "旭日旗", "在日",
+            "チョン", "ジャップ", "支那",
+            "尖閣", "釣魚島", "南京事件", "歴史認識",
+            "韓国併合", "植民地支配", "日韓断交",
+            "ネトウヨ", "パヨク", "売国奴");
+
+    /**
+     * The jp24.13.13 seed of the gender preset (unchanged in jp24.13.14),
+     * whose seed grew in jp24.13.15. Same migration contract as the
+     * jp24.13.12 lists: an exact match is upgraded to the current seed,
+     * any user edit leaves the stored list untouched.
+     */
+    private static final List<String> SEED_13_14_GENDER = Arrays.asList(
+            "フェミニスト", "フェミ", "ツイフェミ", "ミソジニー", "ミサンドリー",
+            "男女論", "女尊男卑", "男尊女卑", "弱者男性", "弱男",
+            "不同意性交", "ジェンダー", "ジェンダーギャップ",
+            "男性差別", "女性差別", "痴漢冤罪", "性加害",
+            "レイプ", "強姦", "性暴力", "性的暴行", "輪姦",
+            "盗撮", "セクハラ", "痴漢", "性被害",
+            "feminist", "feminism", "misogyny", "misandry", "gender war",
+            "rape", "sexual assault", "sexual violence");
+
+    /** The jp24.13.13/13.14 seed of a preset whose seed grew in jp24.13.15, else null. */
+    private static List<String> seed13_14(String id) {
+        if (id.equals(ID_GENDER)) {
+            return SEED_13_14_GENDER;
+        }
+        return null;
+    }
+
+    /** True when a stored preset's phrases are exactly a superseded bundled seed. */
+    private static boolean isSupersededSeed(MuteCategory category) {
+        List<String> seed12 = seed13_12(category.id);
+        if (seed12 != null && category.phrases.equals(seed12)) {
+            return true;
+        }
+        List<String> seed14 = seed13_14(category.id);
+        return seed14 != null && category.phrases.equals(seed14);
+    }
+
+    /** The jp24.13.12 seed of a preset whose seed grew in jp24.13.13, else null. */
+    private static List<String> seed13_12(String id) {
+        if (id.equals(ID_GENDER)) {
+            return SEED_13_12_GENDER;
+        }
+        if (id.equals(ID_NIGHTWORK)) {
+            return SEED_13_12_NIGHTWORK;
+        }
+        if (id.equals(ID_INTLFEUD)) {
+            return SEED_13_12_INTLFEUD;
+        }
+        return null;
     }
 
     /** Display name for a category id: live store first, bundled presets as fallback. */
@@ -597,15 +798,208 @@ public final class MuteCategoryStore {
         } else {
             categories = new ArrayList<>();
         }
+        // jp24.13.12 upgrade migration: a store initialized before the
+        // gender / nightwork / intlfeud presets existed gains each missing
+        // one (with its bundled defaults) on first load. Only the new
+        // presets are appended — every stored category, including user
+        // edits to the other presets, is carried over untouched, and
+        // user-removed vocabulary is never restored. The empty-list cases
+        // (unreadable or cleared store) are skipped: they are not
+        // initialized stores.
+        // jp24.13.14: the regional preset joins the append set.
+        // jp24.13.13: the religion preset joins the append set, and the
+        // three presets whose seeds grew get a seed upgrade — a stored
+        // preset whose phrases are still exactly the jp24.13.12 seed is
+        // replaced with the current seed (its other fields, e.g. the
+        // enabled toggle, are preserved). A user-edited list is left
+        // completely alone; the new words are published in the build
+        // notes for manual adding instead.
+        // jp24.13.15: the gender seed grows again (男女分断); a stored
+        // gender preset still exactly at the jp24.13.13/13.14 seed is
+        // upgraded the same way (see isSupersededSeed).
+        // jp24.13.16: the bait preset joins the append set.
+        if (!categories.isEmpty()) {
+            boolean migrated = false;
+            List<MuteCategory> presets = presetCategories();
+            for (int index = 0; index < categories.size(); index++) {
+                MuteCategory category = categories.get(index);
+                if (!category.preset || !isSupersededSeed(category)) {
+                    continue;
+                }
+                for (MuteCategory preset : presets) {
+                    if (preset.id.equals(category.id)
+                            && !preset.phrases.equals(category.phrases)) {
+                        categories.set(index, category.withPhrases(preset.phrases));
+                        migrated = true;
+                    }
+                }
+            }
+            for (MuteCategory preset : presets) {
+                if ((preset.id.equals(ID_GENDER) || preset.id.equals(ID_NIGHTWORK)
+                        || preset.id.equals(ID_INTLFEUD) || preset.id.equals(ID_RELIGION)
+                        || preset.id.equals(ID_REGIONAL) || preset.id.equals(ID_BAIT))
+                        && !containsId(categories, preset.id)) {
+                    categories.add(preset);
+                    migrated = true;
+                }
+            }
+            if (migrated) {
+                persist(categories);
+            }
+        }
         snapshot = new Snapshot(categories);
         if (!persistence.readSeeded()) {
             persistence.writeSeeded(true);
         }
     }
 
+    private static boolean containsId(List<MuteCategory> categories, String id) {
+        for (MuteCategory category : categories) {
+            if (category.id.equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void publish(List<MuteCategory> categories) {
         snapshot = new Snapshot(categories);
         persist(categories);
+    }
+
+    /** JP jp24.13.17: the persisted document, as embedded in a filter bundle. */
+    public synchronized JSONObject exportDocument() throws JSONException {
+        ensureLoaded();
+        return toJson(snapshot.categories());
+    }
+
+    /**
+     * JP jp24.13.17: replaces the whole category list with a validated
+     * import, then re-completes any bundled preset the file did not
+     * carry (with its bundled defaults), so a minimal hand-edited file
+     * cannot accidentally delete a preset. Custom categories absent
+     * from the file are gone — the file is the truth. Returns how many
+     * categories the file itself carried.
+     */
+    public synchronized int replaceAllFromImport(List<MuteCategory> validated) {
+        ensureLoaded();
+        List<MuteCategory> categories = new ArrayList<>(validated);
+        for (MuteCategory preset : presetCategories()) {
+            if (!containsId(categories, preset.id)) {
+                categories.add(preset);
+            }
+        }
+        publish(categories);
+        return validated.size();
+    }
+
+    /**
+     * JP jp24.13.17: validates one imported muteCategories section and
+     * returns the corrected category list; throws JSONException with an
+     * item-indexed message on the first structural problem.
+     *
+     * <p>Force-corrections keep an import from widening privileges:
+     * {@code preset} is true only for bundled preset IDs (an unknown ID
+     * claiming preset would become undeletable), and the doxxing
+     * detector is available only to the sarashi preset — the raw
+     * fromJson path would let any category claim it. Name, vocabulary,
+     * toggles and scopes are taken from the file as-is.
+     */
+    public static List<MuteCategory> validateImport(JSONObject section) throws JSONException {
+        if (section == null) {
+            throw new JSONException("muteCategories セクションがありません");
+        }
+        int version = section.optInt("version", -1);
+        if (version != SCHEMA_VERSION) {
+            throw new JSONException("muteCategories のバージョン " + version + " には対応していません");
+        }
+        JSONArray array;
+        try {
+            array = section.getJSONArray("categories");
+        } catch (JSONException exception) {
+            throw new JSONException("muteCategories: categories が配列ではありません");
+        }
+        if (array.length() > 64) {
+            throw new JSONException("muteCategories: カテゴリが多すぎます（" + array.length() + "件）");
+        }
+        List<MuteCategory> presets = presetCategories();
+        List<MuteCategory> validated = new ArrayList<>();
+        int totalPhrases = 0;
+        for (int index = 0; index < array.length(); index++) {
+            String where = "muteCategories: カテゴリ" + (index + 1) + "件目";
+            JSONObject object;
+            try {
+                object = array.getJSONObject(index);
+            } catch (JSONException exception) {
+                throw new JSONException(where + "がオブジェクトではありません");
+            }
+            String id = object.optString("id", "").trim();
+            if (id.isEmpty()) {
+                throw new JSONException(where + "の id が空です");
+            }
+            if (containsId(validated, id)) {
+                continue; // First occurrence wins; later duplicates are ignored.
+            }
+            String name = sanitizeName(object.optString("name", ""));
+            if (name.isEmpty()) {
+                throw new JSONException(where + "の名前が空です");
+            }
+            if (name.length() > 50) {
+                throw new JSONException(where + "の名前が長すぎます（50字まで）");
+            }
+            List<String> phrases = new ArrayList<>();
+            JSONArray phraseArray = object.optJSONArray("phrases");
+            if (phraseArray != null) {
+                List<String> seenNormalized = new ArrayList<>();
+                for (int phraseIndex = 0; phraseIndex < phraseArray.length(); phraseIndex++) {
+                    String phrase;
+                    try {
+                        phrase = phraseArray.getString(phraseIndex).trim();
+                    } catch (JSONException exception) {
+                        throw new JSONException(
+                                where + "の単語" + (phraseIndex + 1) + "件目が文字列ではありません");
+                    }
+                    if (phrase.isEmpty()) {
+                        continue;
+                    }
+                    if (phrase.length() > 100) {
+                        throw new JSONException(
+                                where + "の単語" + (phraseIndex + 1) + "件目が長すぎます（100字まで）");
+                    }
+                    String normalized = PostFilterMatcher.normalize(phrase);
+                    if (seenNormalized.contains(normalized)) {
+                        continue;
+                    }
+                    seenNormalized.add(normalized);
+                    phrases.add(phrase);
+                    totalPhrases++;
+                    if (totalPhrases > 2000) {
+                        throw new JSONException("muteCategories: 単語が多すぎます（合計2000件まで）");
+                    }
+                }
+            }
+            boolean preset = false;
+            for (MuteCategory candidate : presets) {
+                if (candidate.id.equals(id)) {
+                    preset = true;
+                    break;
+                }
+            }
+            boolean detectorAvailable = ID_SARASHI.equals(id);
+            validated.add(new MuteCategory(
+                    id,
+                    name,
+                    preset,
+                    object.optBoolean("enabled", true),
+                    object.optBoolean("content", true),
+                    object.optBoolean("quoted", true),
+                    object.optBoolean("screenName", false),
+                    object.optBoolean("displayName", false),
+                    detectorAvailable,
+                    detectorAvailable && object.optBoolean("detector", false),
+                    phrases));
+        }
+        return validated;
     }
 
     private void persist(List<MuteCategory> categories) {
