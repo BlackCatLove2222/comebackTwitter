@@ -1,6 +1,6 @@
 # BUILD — 適用・ビルド手順
 
-comebackTwitter の jp24.13.6 仕様を再現する手順です。全体は2段階:
+comebackTwitter の jp24.13.19 仕様を再現する手順です。全体は2段階:
 
 - **手順 A（バンドルで完結）**: Morphe でパッチバンドルを当てる。日本語化と基本構成はここまでで入る
 - **手順 B（後処理）**: パッチ済み APK に対して、バンドルでは表現できない変更を dex / リソースレベルで追加する。jp23 仕様の残りはほぼすべてここ（例外: B14 はバンドル表現が正規形、B15 は一部がバンドル表現可能。B17 は任意の上級手順）
@@ -322,6 +322,132 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 2. このフラグの読み手はコンポーザーのブースト状態機械（classes13）の表示決定点ただ1箇所であり、false はコード既定値のため副作用は当該アップセルの抑止に限られる。自分の投稿の「ブースト」ボタン等の同名に近い面は**別フラグ群**（`android_tweet_promote_button_boost_cta_*`）であり、本手順では対象にしない（SPEC §30）
 
 検証: classes18 は施工前に無変更再アセンブルが母体とビット一致することを確認する。XApplication の全メソッドに対してレジスタ型ゲートを実行し PASS を確認する。陽性対照として、新しい classes18 にフラグ文字列が1件存在することを確認する
+
+### B33. Explore ランディングのニュース／トレンド除去（jp24.13.7、classes19）
+
+[SPEC.md](SPEC.md) §31 の実装。セクションを制御するフラグは存在しないため、既存のタイムラインフィルタと同じ入口で落とす:
+
+1. **フィルタ本体（classes19）**: `NewXTimelineFilter` に静的メソッド `filterExploreItems(UrtTimelineType, List)` を新設する（Java で書き d8 → smali 移植。依存は既存のモデルアクセサと java.util のみ）。EXPLORE_FOR_YOU のときだけ、Trend（`items.y1`）と EventSummary（`items.m0`）を素・ラッパー（`items.u0`）・モジュール子（`items.a1` の子）の全形で除去する。部分的に残ったモジュールはヘッダー／フッターを保持してコピー再構築し、完全に空になったモジュールは落とす。無変更なら**入力と同一の List オブジェクト**を返し、全体を例外ガード（フェイルオープン）する
+2. **フック（classes19、2命令）**: URT 成功結果の組み立て `com.x.urt.g2.<init>` の先頭に `invoke-static {p1, p2}, filterExploreItems` ＋ `move-result-object p2` を挿入する（既存の filterTimelineItems フックより前）。p1＝タイプ、p2＝アイテムリストで、後続の元コードは p2 をそのまま読む
+
+検証: classes19 のラウンドトリップ往復がビット一致することを先に確認する。最終 dex の正規化 diff が `NewXTimelineFilter` と `g2` の2ファイルのみであること、レジスタ型ゲート PASS、CRC 差分が classes19.dex のみであること。JVM ハーネスで除去形（素／ラッパー／モジュール子／部分残存／全空／無変更時の同一オブジェクト）を検証する
+
+### B34. Explore カテゴリタブへの拡張と広告バナー除去（jp24.13.8、classes6 / classes19）
+
+[SPEC.md](SPEC.md) §32 の実装:
+
+1. **タイプ割当のリラベル（classes6、1命令＋ラベル1つ）**: ホームタブのページ組み立て `com/x/home/tabbed/c` の非公開メソッド `c(Object, Object)` が、タイプ割当の唯一の地点。セグメント評価の分岐 `if-eqz v8, :cond_43` の飛び先を `:cond_44` に付け替え、EXPLORE_FOR_YOU の代入直前に新ラベル `:cond_44` を置く。これで `page == "explore"` の全セグメントが EXPLORE_FOR_YOU になり、B33 の除去（と B35 のキープフィルター）がカテゴリタブにも効く。page が "explore" 以外の経路は無変更であることを分岐表で確認する
+2. **広告バナーの除去（classes19）**: B33 の `filterExploreItems` に、既存ヘルパー `isTimelineRtbImageAd` 経由の `items.p1`（UrtTimelineRtbImageAd）除去を3点（素／モジュール子／再構築時）追加する。SSP は既存 p1 の解決・印付けのみでアイテムを生成しないことを本体コードで確認済み — 除去は g2 地点で完結する
+
+検証: classes6 の正規化 diff が `com/x/home/tabbed/c.smali` のみ（分岐1＋ラベル1）であること。両 dex のレジスタ型ゲート PASS。CRC 差分が classes6.dex ＋ classes19.dex のみであること
+
+### B35. おすすめキープフィルター（jp24.13.9、classes19 / classes21）
+
+[SPEC.md](SPEC.md) §33 の実装。新規ファミリーは classes21、入口は B33 の `filterExploreItems`:
+
+1. **保存層・設定（classes21、新規）**: `postfilter/RecommendKeepStore`（永続 JSON `newx.content.recommend_keep`、schema 1。カテゴリ定義＝技術系／動物／コスプレの語彙・除外語・オプション。フォロー済み著者 ID キャッシュ上限 5,000・期限なし、診断カウンタ、判定メモ）と `postfilter/RecommendKeepSettingsSection`（「ツイートフィルター」画面へのセクション。組み込みは PostFilterFragment への呼び出し追加）を新設する。全文は [src/](src/) に同梱
+2. **判定役（classes21、新規）**: `timeline/RecommendKeepGate`。`isEnabledFor(type)`（対象は FOR_YOU / EXPLORE_FOR_YOU のみ、マスター ON かつ診断 TRUSTED のとき真）、`harvestFollowed(type, items, access)`（FOLLOWING / RANKED_FOLLOWING 応答から著者 ID を収穫）、`evaluatePost(...)`（フォロー済み→キープ／興味カテゴリ一致→キープ＋理由なし／コスプレ条件→理由付き判定／それ以外→ `REC_KEEP_MISS` で落下）
+3. **モデルブリッジ（classes21）**: `TimelineModelAccess` に著者ナビゲーションを追加する。既存の汎用探索は4段までしか降りないため、アイテム→投稿結果→文脈付き投稿→正規投稿→著者→最小ユーザーの**5段を決定的に辿る**専用経路と、表示名取得 `getPostAuthorNameForFilter`（旧ブリッジはタイムラインアイテムから null を返すため新設）、友情情報（`isFollowedByMe` / `isSuperFollowedByMe`）、正規投稿のメディア有無・言語のアクセサを用意する。すべて反射＋例外ガード
+4. **入口（classes19）**: B33 の `filterExploreItems` 内で、対象タイプなら収穫（フォロー中タイプ）またはゲート判定（おすすめタイプ）を行う。落下は FilteredRepliesStore に理由付きで記録し、「フィルタされた返信」ダイアログに `REC_KEEP_*` のラベル分岐を追加する
+
+検証: 新規3クラスの JVM ハーネス（分類・地域判定・診断の遷移）全 PASS。classes19 / classes21 の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes19.dex ＋ classes21.dex のみ。診断が想定外に DEAD へ落ちる経路が無いことをハーネスで確認する（この診断定義自体は B44 で再定義される）
+
+### B36. コスプレ割合キャップ（jp24.13.10、classes21）
+
+[SPEC.md](SPEC.md) §34 の実装。B35 の2クラス内だけで完結する:
+
+1. `RecommendKeepStore` に割合台帳の**別文書**（`newx.content.recommend_keep.ratio`、記録上限 2,000 件）を追加する。設定スナップショットとは独立に読み書きし、割合の変更時は台帳をリセットする
+2. `RecommendKeepGate` のコスプレ・キープ分岐に間隔判定を入れる: 「コスプレのみでキープ」された投稿だけを数え、間隔 N = round((100−p)/p)（既定 p=20 → N=4）を超える分は理由 `REC_KEEP_COS_RATIO` で落とす。カウンタは FOR_YOU / EXPLORE_FOR_YOU で共有（ゲート側の単一カウンタ）
+3. 設定セクションに「コスプレの割合上限」（0〜50%、0% でコスプレ全落とし）を追加する
+
+検証: JVM ハーネスで間隔境界（19%/20%/21% 相当、0%、50%）と台帳リセットを確認する。CRC 差分が classes21.dex のみ
+
+### B37. 英字トークンの単語境界マッチと種の見直し（jp24.13.11、classes21）
+
+[SPEC.md](SPEC.md) §35 の実装。`RecommendKeepStore` の語句マッチャーのみ:
+
+1. マッチャーの一致判定に境界条件を入れる: 純 ASCII 語句は、一致位置の前後の文字が ASCII 英数字でない場合にのみ一致とする。非 ASCII 語句は従来どおり部分文字列
+2. 技術系の種から "AI" を削除し、schema 1→2 の移行で永続済み "ai" を一度だけ除去する（移行ガードは schema 2 を明示的に対象にする — 後続のバージョン定数に引きずられないこと）。割合台帳の文書にもマッチャー版数を持たせ、旧版の台帳は破棄する
+
+検証: JVM ハーネスで境界ケース（単語内包・CamelCase ハッシュタグ・複数形）を確認する。CRC 差分が classes21.dex のみ
+
+### B38. カテゴリプリセット追加 第1弾（jp24.13.12、classes21）
+
+[SPEC.md](SPEC.md) §36 の実装。`MuteCategoryStore` のみ（設定 UI・理由ラベル・判定側は汎用実装のため無変更）:
+
+1. `presetCategories()` に `gender`（ジェンダー・男女論、17語）/ `nightwork`（水商売、21語）/ `intlfeud`（日韓・日中対立、25語）を追加する。種の全文は同梱ソースが正
+2. 読み込み時の移行に append-missing を入れる: 保存済み文書に無いプリセット ID があれば既定値で末尾に補う（冪等、ユーザー編集は無変更）。焦点免除等の判定経路は B27 の既存経路をそのまま使う
+
+検証: JVM ハーネスで新規プリセットの存在・既定値・移行の冪等性・編集済み文書の不変を確認する。CRC 差分が classes21.dex のみ
+
+### B39. 宗教・移民プリセットと多言語種拡張（jp24.13.13、classes21）
+
+[SPEC.md](SPEC.md) §37 の実装。`MuteCategoryStore` のみ:
+
+1. プリセット `religion`（宗教・移民、25語＝日本語15＋英語10）を追加する（B38 の append-missing で既存文書にも入る）
+2. 既存プリセットの種を拡張する: gender 17→34、nightwork 21→23、intlfeud 25→40（英語・韓国語・中国語の語彙を含む）。拡張前の種を参照定数として保持し、移行時に「保存済み語彙が旧種と**完全一致**する場合のみ新種へ置き換える」（トグル等の他フィールドは保持）。編集済みリストには一切触らない
+
+検証: JVM ハーネスで完全一致時のみ置換・編集済みは無変更・冪等を確認する。CRC 差分が classes21.dex のみ
+
+### B40. 評価ポップアップの抑制と「地域・原発」プリセット（jp24.13.14、classes18 / classes21）
+
+[SPEC.md](SPEC.md) §38 の実装:
+
+1. **評価ポップアップ（classes18）**: B32 と同じ登録ブロック（B32 の直後・NewXUtils.initialize の直前）に、`xlite_satisfaction_enabled` = false の登録を1ブロック追加する（3命令、B28 / B32 と同型）。フラグ文字列は classes7 にのみ存在し、読み手は満足度エンジンのコンストラクタ1箇所（エンジンの唯一の生成地点）であることを走査で確認する。Play のレビューライブラリ（classes10）には触らない
+2. **プリセット（classes21）**: `MuteCategoryStore` に `regional`（地域・原発、12語）を追加する（B38 の append-missing 経由）
+
+検証: classes18 は B32 と同じ作法（往復ビット一致、XApplication 全メソッドのレジスタ型ゲート、フラグ文字列の陽性対照）。CRC 差分が classes18.dex ＋ classes21.dex のみ
+
+### B41. 検索候補の指定アカウント非表示と「男女分断」（jp24.13.15、classes6 / classes21）
+
+[SPEC.md](SPEC.md) §39 の実装:
+
+1. **ヘルパー（classes21、新規）**: `postfilter/TypeaheadAuthorFilter`（全文は [src/](src/) に同梱）。`filterMixed(List)` / `filterUsers(List)` の2入口を持ち、トグル `ZombieSettings.blockedAuthorsEnabled()` と `BlockedAuthorsStore` のスナップショットだけで判定する。要素からの ID 取得は TimelineModelAccess と同じ反射方式（混合リストでは候補ラッパーのクラス名を見てユーザー型だけを対象にし、クエリ候補等は素通し）。全体を try/catch で包み、該当なし・トグル OFF・例外時は**入力と同一の List オブジェクト**を返す
+2. **フック（classes6、4箇所×2命令）**: タイプアヘッド集約リポジトリ `Lcom/x/repositories/typeahead/f;` の、ユーザー候補を返す4メソッド（混合リストの `a`、メンション補完の `b`、ユーザー検索の `c`、支払いピッカーの `f`）の**成功出口**に `invoke-static` ＋ `move-result-object` を挿入する。ハッシュタグ系のメソッド（`d` / `e`）は変更しない
+3. **種の追加（classes21）**: B39 と同じ完全一致移行で、gender 種に「男女分断」を1語追加する（34→35語）
+
+検証: classes6 の正規化 diff が `f.smali` のみ（挿入8命令＋ラベル付け替えのみ）であること。ヘルパーと f の全メソッドにレジスタ型ゲート PASS。JVM ハーネスで混合／ユーザーのみの除去・クエリ候補の素通し・同一オブジェクト返却を確認する。CRC 差分が classes6.dex ＋ classes21.dex のみ
+
+### B42. カテゴリ照合への展開URL追加と「誘導・釣り」プリセット（jp24.13.16、classes19 / classes21）
+
+[SPEC.md](SPEC.md) §40 の実装:
+
+1. **URL アクセサ（classes21）**: `TimelineModelAccess` に `getPostExpandedUrls` / `getPostQuotedExpandedUrls` を追加する。本文テキストと同じエンティティリストから URL エンティティリストを取り、各要素について expandedUrl を優先し、空なら displayUrl にフォールバックする。要素単位＋全体の例外ガード付き（失敗時は空リスト）。⚠ このクラスは全体再コンパイルで出荷済みクラスと意味差分が出る（ツールチェーン差）ため、新規メソッドだけをコンパイル済み smali から移植する
+2. **照合の拡張（classes19 / classes21）**: classes19 の `evaluateMuteCategory` が、本文スコープ有効時に本文 URL、引用スコープ有効時に引用 URL を取得し、`MuteCategoryStore.Snapshot.findMatch` の6引数版へ渡す（4引数版は null リストで委譲＝従来動作と同一）。照合側はテキストの後に URL を同じ正規化で走査する。晒し検出器は URL に適用しない。キーワードフィルタと B35 のキープフィルターには触れない
+3. **プリセット（classes21）**: `MuteCategoryStore` に `bait`（誘導・釣り、フレーズ6＋ドメイン8）を追加する（B38 の append-missing 経由）。フレーズは長い方を先に置く
+
+検証: JVM ハーネスで URL 照合（本文／引用、大文字小文字、t.co 単体では誤爆しない、無害ドメインは通過、スコープ OFF 時は対象外、理由形式）を確認する。両 dex の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes19.dex ＋ classes21.dex のみ
+
+### B43. 指定アカウント ID エディタと JSON バンドル入出力（jp24.13.17、classes21 ほか）
+
+[SPEC.md](SPEC.md) §41 の実装:
+
+1. **ストア側の検証ヘルパー（classes21）**: `BlockedAuthorsStore` に `normalizeIdInput` / `idInputError`（数値のみ・19桁まで・先行ゼロ正規化・全ゼロ不可）と `replaceAll`（インポート用。SEEDED フラグを必ず立てる）を追加する
+2. **ID エディタ（classes21）**: `ZombieSettingsSection` の「指定アカウントを非表示」トグルの下に「指定アカウントを編集（N件）」ボタンを追加し、ダイアログで ID 一覧（数値昇順、各行に削除）＋数値入力＋追加を実装する。書き込みはストア経由で即時反映（再起動不要）。ダイアログを閉じたら件数ラベルを更新する
+3. **バンドル入出力（classes21、新規）**: `postfilter/FilterBundleImportExport`（全文は [src/](src/) に同梱）。エクスポートは muteCategories / keywordRules / recommendKeep（投影のみ。`RecommendKeepStore.exportProjection()` を新設し、フォローキャッシュと診断状態は出さない）の3セクションで、**blockedAuthors は含めない**。インポートは2段階検証→適用で、muteCategories は全置換＋プリセット補完＋なりすまし強制補正、blockedAuthors は手書きファイル分のみ受け付け（無効エントリはスキップして件数報告）
+4. **画面側の配線（classes21）**: 「ツイートフィルター」画面の末尾にエクスポート／インポートボタンを置き、ファイル（作成／開く、要求コードは FeatureSwitch 系と重ならない値、上限 1MB）とクリップボードの両経路を用意する。結果は `NewXSettingsActivity.onUnhandledActivityResult` のチェーンに1行追加して受ける。ファイルインポート後の画面反映のため、`PostFilterFragment` は3セクションを個別コンテナで保持し onResume で再構築する（B29 と同じ外科モデル。レジスタ型ゲート必須）
+
+検証: JVM ハーネスでエディタ検証・seed-once・書き出し形状（blockedAuthors / followedCache / diag が文字列として現れないこと）・往復・セクション単位の失敗分離・なりすまし補正を確認する。レジスタ型ゲートは変更した全クラス（PostFilterFragment の外科メソッド含む）で PASS。CRC 差分が classes21.dex のみ
+
+### B44. キープフィルター診断の修正（jp24.13.18、classes21）
+
+[SPEC.md](SPEC.md) §42 の実装。B35 の診断定義の差し替え:
+
+1. **ゲート側**: `RecommendKeepGate.harvestFollowed` の診断ヒットを「友情フラグが真」から「**著者 ID が収穫できた**」に変える。ゲートはパスごとの増分（サンプル数・ヒット数）だけを数え、ストアへ1回だけマージする（ゲート側の読み書き競合を持たない）。メソッド単位のトランスプラントで施工し、クラス内の他メソッドはバイト同一を保つ
+2. **ストア側**: 診断更新を同期メソッド `recordHarvestSamples(deltaSamples, deltaHits)` に集約する（サンプル40到達で ヒット>0 ? TRUSTED : DEAD を決定。到達後は単調で、後着のマージは無効）。旧 `updateDiagnostic` は削除する（呼び出し元がゲートだけであることをツリー走査で確認）
+3. **移行**: schema 2→3。読み込み時に旧 DEAD を一度だけ UNKNOWN へ戻す移行を入れ、読み込み後の再保存で「一度きり」を保証する。schema 2 用の既存移行のガードは対象 schema を明示する形に固定する
+4. 設定セクションの DEAD 文言を新定義に合わせて1箇所変更する
+
+検証: JVM ハーネスで旧バグ再現（フラグ全滅でも ID が取れれば TRUSTED）・真の停止（ID ゼロで DEAD が永続）・並行マージの単調性・移行の一度きりを確認する。最終 dex の正規化 diff が対象3ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes21.dex のみ
+
+### B45. キープフィルターのページ単位プリスキャン fail-open（jp24.13.19、classes19 / classes21）
+
+[SPEC.md](SPEC.md) §43 の実装:
+
+1. **ゲート側（classes21）**: `RecommendKeepGate` に `hasFollowedSignal(items, access)` を追加する。収穫と同じ投稿収集でページを走査し、著者が「フラグ TRUE またはキャッシュ命中」のいずれかなら真。例外時は偽（＝信号なし）を返し、呼び出し側を素通しに倒す。メソッド単位のトランスプラントで施工する
+2. **フィルタ側（classes19、8命令）**: B33 の `filterExploreItems` で、ゲート有効判定（`isEnabledFor`）の直後にプリスキャンを挿入する: ゲート有効かつ信号なしなら、そのページのゲート適用自体を取りやめる（落下・記録・判定メモのいずれにも触れない）。Explore のニュース／トレンド／広告除去（B33 / B34）は並行して従来どおり行う
+
+検証: JVM ハーネスで信号あり（従来動作）／信号ゼロ（同一オブジェクト返却・記録ゼロ・メモ不変）／フラグのみ信号／複数アカウントの和集合キャッシュ挙動／プリスキャン例外時を確認する。両 dex の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes19.dex ＋ classes21.dex のみ
 
 ## 手順 C — 再署名
 
