@@ -9,6 +9,8 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.List;
+
 import app.morphe.extension.crimera.settings.SettingsUi;
 import app.morphe.extension.crimera.ui.ButtonView;
 import app.morphe.extension.crimera.ui.DialogView;
@@ -23,9 +25,6 @@ import app.morphe.extension.shared.Utils;
  * toggles inline, phrase lists edited in dialogs.
  */
 public final class RecommendKeepSettingsSection {
-
-    private static final int KIND_CATEGORY = 0;
-    private static final int KIND_EXCLUSION = 1;
 
     private RecommendKeepSettingsSection() {
     }
@@ -49,7 +48,7 @@ public final class RecommendKeepSettingsSection {
 
         TextView summary = SettingsUi.summaryText(context);
         summary.setText("おすすめ（ホーム）と探索のおすすめ投稿のうち、"
-                + "技術系・動物・コスプレ（アジア圏）に一致するものだけを残します。"
+                + "技術系・動物に一致するものだけを残します。"
                 + "フォロー中アカウントの投稿は常に表示されます。"
                 + "非表示にした投稿は、投稿メニューの「非表示にした返信」から理由つきで確認できます。");
         container.addView(summary);
@@ -64,10 +63,7 @@ public final class RecommendKeepSettingsSection {
                         RecommendKeepStore.shared().snapshot().options();
                 RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
                         checked, current.targetHome, current.targetExplore,
-                        current.followedAlways, current.nonAsiaCosplay,
-                        current.cosMediaRequired, current.keepTextless,
-                        current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
+                        current.followedAlways, current.keepTextless));
                 buildInto(context, container);
             }
         });
@@ -101,10 +97,7 @@ public final class RecommendKeepSettingsSection {
                     public void apply(RecommendKeepStore.Options current, boolean checked) {
                         RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
                                 current.master, checked, current.targetExplore,
-                                current.followedAlways, current.nonAsiaCosplay,
-                                current.cosMediaRequired, current.keepTextless,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
+                                current.followedAlways, current.keepTextless));
                     }
                 }));
         container.addView(switchRow(context, "対象: 探索ランディング", null,
@@ -113,10 +106,7 @@ public final class RecommendKeepSettingsSection {
                     public void apply(RecommendKeepStore.Options current, boolean checked) {
                         RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
                                 current.master, current.targetHome, checked,
-                                current.followedAlways, current.nonAsiaCosplay,
-                                current.cosMediaRequired, current.keepTextless,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
+                                current.followedAlways, current.keepTextless));
                     }
                 }));
         container.addView(switchRow(context, "フォロー中アカウントは常時表示",
@@ -126,10 +116,7 @@ public final class RecommendKeepSettingsSection {
                     public void apply(RecommendKeepStore.Options current, boolean checked) {
                         RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
                                 current.master, current.targetHome, current.targetExplore,
-                                checked, current.nonAsiaCosplay,
-                                current.cosMediaRequired, current.keepTextless,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
+                                checked, current.keepTextless));
                     }
                 }));
 
@@ -149,105 +136,12 @@ public final class RecommendKeepSettingsSection {
             edit.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    showPhraseEditor(context, container, KIND_CATEGORY, category.id,
+                    showPhraseEditor(context, container, category.id,
                             category.name);
                 }
             });
             container.addView(edit);
         }
-
-        container.addView(SettingsUi.divider(context));
-        TextView cosplayHeader = SettingsUi.summaryText(context);
-        cosplayHeader.setText("コスプレの条件");
-        container.addView(cosplayHeader);
-        container.addView(switchRow(context, "非アジア圏コスプレも残す", null,
-                options.nonAsiaCosplay, new OnToggle() {
-                    @Override
-                    public void apply(RecommendKeepStore.Options current, boolean checked) {
-                        RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
-                                current.master, current.targetHome, current.targetExplore,
-                                current.followedAlways, checked,
-                                current.cosMediaRequired, current.keepTextless,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
-                    }
-                }));
-        container.addView(switchRow(context, "コスプレはメディア必須",
-                "画像・動画のないコスプレ投稿を落とします",
-                options.cosMediaRequired, new OnToggle() {
-                    @Override
-                    public void apply(RecommendKeepStore.Options current, boolean checked) {
-                        RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
-                                current.master, current.targetHome, current.targetExplore,
-                                current.followedAlways, current.nonAsiaCosplay,
-                                checked, current.keepTextless,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
-                    }
-                }));
-        container.addView(switchRow(context, "フォロワー数しきい値（コスプレ用）",
-                "指定数未満のアカウントのコスプレ投稿を落とします",
-                options.followerThresholdEnabled, new OnToggle() {
-                    @Override
-                    public void apply(RecommendKeepStore.Options current, boolean checked) {
-                        RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
-                                current.master, current.targetHome, current.targetExplore,
-                                current.followedAlways, current.nonAsiaCosplay,
-                                current.cosMediaRequired, current.keepTextless,
-                                checked, current.followerThreshold,
-                                current.cosplayRatioPercent));
-                        buildInto(context, container);
-                    }
-                }));
-        if (options.followerThresholdEnabled) {
-            TextView threshold = textButton(context,
-                    "しきい値: " + options.followerThreshold + "人（タップで変更）");
-            threshold.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    showThresholdEditor(context, container);
-                }
-            });
-            container.addView(threshold);
-        }
-
-        TextView ratio = textButton(context,
-                "コスプレの割合上限: " + options.cosplayRatioPercent + "%（タップで変更）");
-        ratio.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showRatioEditor(context, container);
-            }
-        });
-        container.addView(ratio);
-        TextView ratioNote = SettingsUi.summaryText(context);
-        ratioNote.setText("残す投稿のうちコスプレが占める割合の上限です。"
-                + "コスプレ以外の投稿（フォロー中・技術系・動物など）が間隔を空けます。"
-                + "0%ではコスプレはすべて落とします。変更すると割合の数え直しが始まります。");
-        container.addView(ratioNote);
-
-        container.addView(SettingsUi.divider(context));
-        SettingsUi.SwitchRow exclusionRow = SettingsUi.switchRow(
-                context, "男性レイヤー・男の娘を除外",
-                "コスプレ判定の前に、表示名・プロフィール・本文の除外単語で落とします",
-                snapshot.exclusionEnabled());
-        exclusionRow.setOnCheckedChangeListener(new SettingsUi.CheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(boolean checked) {
-                RecommendKeepStore.shared().setExclusionEnabled(checked);
-            }
-        });
-        container.addView(exclusionRow);
-        TextView exclusionEdit = textButton(context,
-                "除外単語を編集（" + snapshot.exclusionPhrases().size() + "件の単語）");
-        exclusionEdit.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showPhraseEditor(context, container, KIND_EXCLUSION, null,
-                        "男性レイヤー・男の娘の除外単語");
-            }
-        });
-        container.addView(exclusionEdit);
 
         container.addView(SettingsUi.divider(context));
         container.addView(switchRow(context, "テキスト無し投稿も残す",
@@ -257,10 +151,7 @@ public final class RecommendKeepSettingsSection {
                     public void apply(RecommendKeepStore.Options current, boolean checked) {
                         RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
                                 current.master, current.targetHome, current.targetExplore,
-                                current.followedAlways, current.nonAsiaCosplay,
-                                current.cosMediaRequired, checked,
-                                current.followerThresholdEnabled, current.followerThreshold,
-                                current.cosplayRatioPercent));
+                                current.followedAlways, checked));
                     }
                 }));
     }
@@ -321,118 +212,9 @@ public final class RecommendKeepSettingsSection {
         return button;
     }
 
-    private static void showThresholdEditor(
-            final Context context, final LinearLayout container) {
-        LinearLayout form = new LinearLayout(context);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(
-                Theme.dpToPx(context, 24f),
-                Theme.dpToPx(context, 8f),
-                Theme.dpToPx(context, 24f),
-                0);
-        final EditText input = SettingsUi.textInput(
-                context, "フォロワー数", InputType.TYPE_CLASS_NUMBER);
-        input.setText(String.valueOf(
-                RecommendKeepStore.shared().snapshot().options().followerThreshold));
-        form.addView(input, new LinearLayout.LayoutParams(-1, -2));
-
-        final DialogView dialog = new DialogView(context)
-                .setTitle("フォロワー数しきい値")
-                .setScrollableBodyView(form);
-        ButtonView cancel = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "キャンセル");
-        cancel.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                dialog.dismiss();
-            }
-        });
-        dialog.addButton(cancel);
-        ButtonView save = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "保存");
-        save.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                try {
-                    long value = Long.parseLong(input.getText().toString().trim());
-                    if (value < 0) {
-                        throw new NumberFormatException("negative");
-                    }
-                    RecommendKeepStore.Options current =
-                            RecommendKeepStore.shared().snapshot().options();
-                    RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
-                            current.master, current.targetHome, current.targetExplore,
-                            current.followedAlways, current.nonAsiaCosplay,
-                            current.cosMediaRequired, current.keepTextless,
-                            current.followerThresholdEnabled, value,
-                            current.cosplayRatioPercent));
-                    dialog.dismiss();
-                    buildInto(context, container);
-                } catch (NumberFormatException exception) {
-                    Utils.showToastShort("数値を入力してください");
-                }
-            }
-        });
-        dialog.addButton(save);
-        dialog.show();
-    }
-
-    private static void showRatioEditor(
-            final Context context, final LinearLayout container) {
-        LinearLayout form = new LinearLayout(context);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(
-                Theme.dpToPx(context, 24f),
-                Theme.dpToPx(context, 8f),
-                Theme.dpToPx(context, 24f),
-                0);
-        final EditText input = SettingsUi.textInput(
-                context, "割合（0〜50）", InputType.TYPE_CLASS_NUMBER);
-        input.setText(String.valueOf(
-                RecommendKeepStore.shared().snapshot().options().cosplayRatioPercent));
-        form.addView(input, new LinearLayout.LayoutParams(-1, -2));
-
-        final DialogView dialog = new DialogView(context)
-                .setTitle("コスプレの割合上限")
-                .setScrollableBodyView(form);
-        ButtonView cancel = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "キャンセル");
-        cancel.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                dialog.dismiss();
-            }
-        });
-        dialog.addButton(cancel);
-        ButtonView save = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "保存");
-        save.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                try {
-                    int value = Integer.parseInt(input.getText().toString().trim());
-                    if (value < 0 || value > 50) {
-                        throw new NumberFormatException("out of range");
-                    }
-                    RecommendKeepStore.Options current =
-                            RecommendKeepStore.shared().snapshot().options();
-                    RecommendKeepStore.shared().setOptions(new RecommendKeepStore.Options(
-                            current.master, current.targetHome, current.targetExplore,
-                            current.followedAlways, current.nonAsiaCosplay,
-                            current.cosMediaRequired, current.keepTextless,
-                            current.followerThresholdEnabled, current.followerThreshold,
-                            value));
-                    dialog.dismiss();
-                    buildInto(context, container);
-                } catch (NumberFormatException exception) {
-                    Utils.showToastShort("0〜50の数値を入力してください");
-                }
-            }
-        });
-        dialog.addButton(save);
-        dialog.show();
-    }
-
     private static void showPhraseEditor(
             final Context context,
             final LinearLayout container,
-            final int kind,
             final String categoryId,
             String title) {
         LinearLayout form = new LinearLayout(context);
@@ -446,7 +228,7 @@ public final class RecommendKeepSettingsSection {
         final DialogView dialog = new DialogView(context)
                 .setTitle(title)
                 .setScrollableBodyView(form);
-        renderPhraseEditor(context, dialog, form, kind, categoryId);
+        renderPhraseEditor(context, dialog, form, categoryId);
 
         ButtonView close = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "閉じる");
         close.setOnClickListener(new View.OnClickListener() {
@@ -466,10 +248,7 @@ public final class RecommendKeepSettingsSection {
     }
 
     private static java.util.List<String> phrasesOf(
-            RecommendKeepStore store, int kind, String categoryId) {
-        if (kind == KIND_EXCLUSION) {
-            return store.snapshot().exclusionPhrases();
-        }
+            RecommendKeepStore store, String categoryId) {
         RecommendKeepStore.Category category = store.snapshot().category(categoryId);
         return category == null ? java.util.Collections.emptyList() : category.phrases;
     }
@@ -478,7 +257,6 @@ public final class RecommendKeepSettingsSection {
             final Context context,
             final DialogView dialog,
             final LinearLayout form,
-            final int kind,
             final String categoryId) {
         form.removeAllViews();
         final RecommendKeepStore store = RecommendKeepStore.shared();
@@ -489,7 +267,7 @@ public final class RecommendKeepSettingsSection {
         final LinearLayout phraseList = new LinearLayout(context);
         phraseList.setOrientation(LinearLayout.VERTICAL);
         form.addView(phraseList);
-        renderPhrases(context, phraseList, phraseHeader, kind, categoryId);
+        renderPhrases(context, phraseList, phraseHeader, categoryId);
 
         LinearLayout addRow = new LinearLayout(context);
         addRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -501,16 +279,39 @@ public final class RecommendKeepSettingsSection {
         addPhrase.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                try {
-                    if (kind == KIND_EXCLUSION) {
-                        store.addExclusionPhrase(phraseInput.getText().toString());
-                    } else {
-                        store.addPhrase(categoryId, phraseInput.getText().toString());
+                // JP jp24.13.21: bulk add — see BulkPhraseInput. A
+                // single word behaves exactly as before.
+                String raw = phraseInput.getText().toString();
+                List<String> phrases = BulkPhraseInput.split(raw);
+                if (phrases.size() <= 1) {
+                    try {
+                        store.addPhrase(categoryId,
+                                phrases.isEmpty() ? raw : phrases.get(0));
+                        phraseInput.setText("");
+                        renderPhrases(context, phraseList, phraseHeader, categoryId);
+                    } catch (RecommendKeepStore.ValidationException exception) {
+                        Utils.showToastShort(exception.getMessage());
                     }
+                    return;
+                }
+                int added = 0;
+                String firstError = null;
+                for (String phrase : phrases) {
+                    try {
+                        store.addPhrase(categoryId, phrase);
+                        added++;
+                    } catch (RecommendKeepStore.ValidationException exception) {
+                        if (firstError == null) {
+                            firstError = exception.getMessage();
+                        }
+                    }
+                }
+                if (added > 0) {
                     phraseInput.setText("");
-                    renderPhrases(context, phraseList, phraseHeader, kind, categoryId);
-                } catch (RecommendKeepStore.ValidationException exception) {
-                    Utils.showToastShort(exception.getMessage());
+                    renderPhrases(context, phraseList, phraseHeader, categoryId);
+                    Utils.showToastShort(added + "件の単語を追加しました");
+                } else if (firstError != null) {
+                    Utils.showToastShort(firstError);
                 }
             }
         });
@@ -521,13 +322,11 @@ public final class RecommendKeepSettingsSection {
         restore.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                int added = kind == KIND_EXCLUSION
-                        ? store.addPresetExclusionPhrases()
-                        : store.addPresetPhrases(categoryId);
+                int added = store.addPresetPhrases(categoryId);
                 Utils.showToastShort(added > 0
                         ? added + "件の単語を追加しました"
                         : "追加できる単語はありません");
-                renderPhrases(context, phraseList, phraseHeader, kind, categoryId);
+                renderPhrases(context, phraseList, phraseHeader, categoryId);
             }
         });
         form.addView(restore);
@@ -537,11 +336,10 @@ public final class RecommendKeepSettingsSection {
             final Context context,
             final LinearLayout phraseList,
             final TextView phraseHeader,
-            final int kind,
             final String categoryId) {
         phraseList.removeAllViews();
         final RecommendKeepStore store = RecommendKeepStore.shared();
-        java.util.List<String> phrases = phrasesOf(store, kind, categoryId);
+        java.util.List<String> phrases = phrasesOf(store, categoryId);
         phraseHeader.setText("単語（" + phrases.size() + "件）");
         for (final String phrase : phrases) {
             LinearLayout row = new LinearLayout(context);
@@ -564,12 +362,8 @@ public final class RecommendKeepSettingsSection {
             delete.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    if (kind == KIND_EXCLUSION) {
-                        store.removeExclusionPhrase(phrase);
-                    } else {
-                        store.removePhrase(categoryId, phrase);
-                    }
-                    renderPhrases(context, phraseList, phraseHeader, kind, categoryId);
+                    store.removePhrase(categoryId, phrase);
+                    renderPhrases(context, phraseList, phraseHeader, categoryId);
                 }
             });
             row.addView(delete);

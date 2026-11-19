@@ -46,7 +46,7 @@ import app.morphe.extension.crimera.ui.DialogView;
  * <p>Bundle shape:
  * {@code {"format":"comebacktwitter-filter-bundle","version":1,
  * "sections":{...}}}. Export carries muteCategories, keywordRules and
- * the recommendKeep PROJECTION (categories/exclusion/options — never
+ * the recommendKeep PROJECTION (categories/options — never
  * the followed-ID cache or the follower-gate diagnostics).
  * blockedAuthors is NEVER exported (user decision, final): the section
  * exists on the import side only, for hand-authored files.
@@ -152,8 +152,6 @@ public final class FilterBundleImportExport {
 
     private static final class KeepImport {
         List<RecommendKeepStore.Category> categories;
-        boolean exclusionEnabled;
-        List<String> exclusionPhrases;
         RecommendKeepStore.Options options;
     }
 
@@ -273,10 +271,9 @@ public final class FilterBundleImportExport {
             } else {
                 try {
                     RecommendKeepStore.shared().replaceProjectionFromImport(
-                            keep.categories, keep.exclusionEnabled, keep.exclusionPhrases,
-                            keep.options);
-                    results.add(new SectionResult("おすすめキープ", true,
-                            "カテゴリ" + keep.categories.size() + "件を取り込みました"));
+                            keep.categories, keep.options);
+                    String detail = "カテゴリ" + keep.categories.size() + "件を取り込みました";
+                    results.add(new SectionResult("おすすめキープ", true, detail));
                 } catch (Exception exception) {
                     NewXLogger.printException(() -> "FilterBundleImportExport keep apply failed", exception);
                     results.add(new SectionResult("おすすめキープ", false,
@@ -317,7 +314,7 @@ public final class FilterBundleImportExport {
             throw new JSONException("おすすめキープ: categories が配列ではありません");
         }
         Set<String> knownIds = new LinkedHashSet<>(
-                Arrays.asList("tech", "animals", "cosplay"));
+                Arrays.asList("tech", "animals"));
         KeepImport result = new KeepImport();
         result.categories = new ArrayList<>();
         int[] totalPhrases = {0};
@@ -355,34 +352,16 @@ public final class FilterBundleImportExport {
             result.categories.add(new RecommendKeepStore.Category(
                     id, name, object.optBoolean("enabled", true), phrases));
         }
-        JSONObject exclusion = section.optJSONObject("exclusion");
-        result.exclusionEnabled = true;
-        result.exclusionPhrases = new ArrayList<>();
-        if (exclusion != null) {
-            result.exclusionEnabled = exclusion.optBoolean("enabled", true);
-            result.exclusionPhrases = validatedPhrases(
-                    exclusion.optJSONArray("phrases"), "おすすめキープ: 除外リスト", totalPhrases);
-        }
         RecommendKeepStore.Options defaults = RecommendKeepStore.Options.defaults();
         result.options = defaults;
         JSONObject optionsObject = section.optJSONObject("options");
         if (optionsObject != null) {
-            long threshold = optionsObject.optLong("followerThreshold", defaults.followerThreshold);
-            if (threshold < 0) {
-                throw new JSONException("おすすめキープ: followerThreshold が負の値です");
-            }
             result.options = new RecommendKeepStore.Options(
                     optionsObject.optBoolean("master", defaults.master),
                     optionsObject.optBoolean("targetHome", defaults.targetHome),
                     optionsObject.optBoolean("targetExplore", defaults.targetExplore),
                     optionsObject.optBoolean("followedAlways", defaults.followedAlways),
-                    optionsObject.optBoolean("nonAsiaCosplay", defaults.nonAsiaCosplay),
-                    optionsObject.optBoolean("cosMediaRequired", defaults.cosMediaRequired),
-                    optionsObject.optBoolean("keepTextless", defaults.keepTextless),
-                    optionsObject.optBoolean("followerThresholdEnabled",
-                            defaults.followerThresholdEnabled),
-                    threshold,
-                    optionsObject.optInt("cosplayRatioPercent", defaults.cosplayRatioPercent));
+                    optionsObject.optBoolean("keepTextless", defaults.keepTextless));
         }
         return result;
     }

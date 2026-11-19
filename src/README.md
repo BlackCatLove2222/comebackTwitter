@@ -122,12 +122,12 @@ jp24.13.17 で設定画面の ID エディタ（[../SPEC.md](../SPEC.md) §41、
 
 ## RecommendKeepGate.java / RecommendKeepStore.java / RecommendKeepSettingsSection.java / CurrentViewer.java — jp24.13.9〜13.23 おすすめキープフィルター
 
-フォロー外のおすすめ投稿を「興味カテゴリ（技術系 / 動物 / 条件付きコスプレ）に合うものだけ残す」キープフィルター（[../SPEC.md](../SPEC.md) §33、[../BUILD.md](../BUILD.md) B35）の拡張側クラスの全文。配置先は **classes21.dex**。
+フォロー外のおすすめ投稿を「興味カテゴリ（技術系 / 動物）に合うものだけ残す」キープフィルター（[../SPEC.md](../SPEC.md) §33、[../BUILD.md](../BUILD.md) B35）の拡張側クラスの全文。配置先は **classes21.dex**。
 
-- **RecommendKeepGate.java**（`timeline/`）: 判定役。対象タイプは FOR_YOU / EXPLORE_FOR_YOU のみ。フォロー中応答から著者 ID を収穫してキャッシュし（上限 5,000 件、期限なし）、分類は「友情フラグ OR キャッシュ」の OR 意味論。コスプレは地域信号（言語フィールド→文字種の順）＋メディア必須＋除外語なし＋**割合キャップ**（jp24.13.10、§34、B36。既定 20%＝キープ5件に1件まで、0% で全落とし `REC_KEEP_COS_RATIO`）。jp24.13.18 の診断修正（§42、B44）後は「著者 ID が収穫できたこと」自体を診断のヒットとし、jp24.13.19（§43、B45）ではページ単位プリスキャン `hasFollowedSignal` が「フォロー済み著者が1人もいないページは丸ごと素通し（記録も書かない）」を担います。jp24.13.21（§45、B47）でページ収量ガード（8件以上・保持3件以下で素通し）、jp24.13.23（§49、B51）で比率ガード（保持が半分未満なら素通し。従来条件は算術上これに含まれる）が加わりました
-- **RecommendKeepStore.java**（`postfilter/`）: 保存層（永続 JSON `newx.content.recommend_keep`）。語句マッチは jp24.13.11 以降、純 ASCII 語句に**単語境界**を要求します（§35、B37。「AI」は種からも削除）。診断カウンタの更新は `recordHarvestSamples` に集約され、TRUSTED / DEAD 到達後は単調（巻き戻しなし）。jp24.13.17 では JSON バンドル用の投影エクスポート `exportProjection()`（カテゴリ・除外語・オプションのみ。**フォローキャッシュと診断状態は含めない**）が加わりました。**jp24.13.20（§44、B46）で schema 4** となり、フォローキャッシュ・診断・割合台帳はアカウント別パーティション（`accounts: {userId: …}`、LRU 上限 8）に分離されました。移行は旧和集合データの**破棄**です（帰属記録が無いため種として入れない）。収量ガード用の比率状態スナップショット／復元もここにあります
+- **RecommendKeepGate.java**（`timeline/`）: 判定役。対象タイプは FOR_YOU / EXPLORE_FOR_YOU のみ。フォロー中応答から著者 ID を収穫してキャッシュし（上限 5,000 件、期限なし）、分類は「友情フラグ OR キャッシュ」の OR 意味論。jp24.13.18 の診断修正（§42、B44）後は「著者 ID が収穫できたこと」自体を診断のヒットとし、jp24.13.19（§43、B45）ではページ単位プリスキャン `hasFollowedSignal` が「フォロー済み著者が1人もいないページは丸ごと素通し（記録も書かない）」を担います。jp24.13.21（§45、B47）でページ収量ガード（8件以上・保持3件以下で素通し）、jp24.13.23（§49、B51）で比率ガード（保持が半分未満なら素通し。従来条件は算術上これに含まれる）が加わりました
+- **RecommendKeepStore.java**（`postfilter/`）: 保存層（永続 JSON `newx.content.recommend_keep`）。語句マッチは jp24.13.11 以降、純 ASCII 語句に**単語境界**を要求します（§35、B37。「AI」は種からも削除）。診断カウンタの更新は `recordHarvestSamples` に集約され、TRUSTED / DEAD 到達後は単調（巻き戻しなし）。jp24.13.17 では JSON バンドル用の投影エクスポート `exportProjection()`（カテゴリ・オプションのみ。**フォローキャッシュと診断状態は含めない**）が加わりました。**jp24.13.20（§44、B46）で schema 4** となり、フォローキャッシュ・診断はアカウント別パーティション（`accounts: {userId: …}`、LRU 上限 8）に分離されました。移行は旧和集合データの**破棄**です（帰属記録が無いため種として入れない）
 - **CurrentViewer.java**（`timeline/`）: 表示中アカウントの ID を保持する小さなホルダ（jp24.13.20 で新設）。本体側ブリッジからの通知で更新され、フィルタはパス開始時に1回だけキーを解決します。未判定（0）の間はゲート完全 OFF・収穫なしが仕様です
-- **RecommendKeepSettingsSection.java**（`postfilter/`）: 設定セクション（マスター、カテゴリ別 ON/OFF と語句編集、フォロワー数しきい値、コスプレ割合上限、診断状態の表示とリセット）。jp24.13.20 以降、診断表示・リセットは現在のアカウントのパーティションが対象で、アカウント ID を併記します。単語エディタは BulkPhraseInput（下記）経由の一括追加に対応しています
+- **RecommendKeepSettingsSection.java**（`postfilter/`）: 設定セクション（マスター、カテゴリ別 ON/OFF と語句編集、診断状態の表示とリセット）。jp24.13.20 以降、診断表示・リセットは現在のアカウントのパーティションが対象で、アカウント ID を併記します。単語エディタは BulkPhraseInput（下記）経由の一括追加に対応しています
 - 判定の入口（classes19 `NewXTimelineFilter.filterExploreItems` への外科挿入、著者までの5段ナビゲーション用ブリッジ `TimelineModelAccess` の追加分、閲覧者ブリッジの本体側挿入）は同梱しません — 手順と要点は BUILD.md B35 / B46 を参照
 
 ## PostFilterFragment.java / BulkPhraseInput.java — jp24.13.21 / jp24.13.22.2 ツイートフィルター画面
@@ -135,7 +135,7 @@ jp24.13.17 で設定画面の ID エディタ（[../SPEC.md](../SPEC.md) §41、
 「ツイートフィルター」画面本体（`postfilter/`、classes21.dex）の全文と、単語の一括追加ユーティリティです。
 
 - **PostFilterFragment.java**: jp24.13.3 の ScrollView 化に続き、jp24.13.21（§45、B47）でルール一覧の固定高さ ListView を廃して ScrollView 内の行描画に統一しました（画面全体が1本のスクロール面）。jp24.13.22.2（§48、B50）では、アダプタへのデータ投入（`submit`）欠落でキーワードルールがあると画面が落ちた事故を、アダプタを唯一の真実とする形で修正しています — 件数と行の出所を二重管理しないことが要点です
-- **BulkPhraseInput.java**: 単語追加欄の入力を `[,、，\r\n]+` で分割し、全角スペース含む trim と初出順の重複排除を行う純粋ユーティリティ。カテゴリ別ミュートとおすすめキープ（カテゴリ・除外の両方）の単語エディタから使います
+- **BulkPhraseInput.java**: 単語追加欄の入力を `[,、，\r\n]+` で分割し、全角スペース含む trim と初出順の重複排除を行う純粋ユーティリティ。カテゴリ別ミュートとおすすめキープの単語エディタから使います
 
 ## SavedMediaFragment.java / SavedMediaStore.java / SavedMediaSaf.java / SavedMediaFolders.java / SavedMediaSettings.java — jp24.13.22〜13.24 保存メディアビューア
 

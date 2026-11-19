@@ -4,12 +4,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
-import app.morphe.extension.newx.postfilter.PostFilterMatcher;
 import app.morphe.extension.newx.postfilter.RecommendKeepStore;
 import app.morphe.extension.newx.postfilter.VerifiedAccountWhitelistStore;
 import app.morphe.extension.newx.utils.NewXUtils;
@@ -27,22 +24,11 @@ import app.morphe.extension.newx.utils.NewXUtils;
  * unknown friendship state with an empty cache, and the diagnostic
  * warm-up phase all keep the post.
  *
- * <p>JP jp24.13.10: cosplay-path keeps are additionally subject to the
- * ratio cap in {@link RecommendKeepStore} — a cosplay post is kept only
- * when enough non-cosplay keeps separate it from the previous kept
- * cosplay post. Keeps by every other path (followed / whitelisted
- * author, tech, animals, textless) feed that spacing counter and are
- * never ratio-dropped; a post matching tech or animals AND cosplay is
- * decided by the non-cosplay category and never counted as cosplay.
- * Accounting happens only here in classify, i.e. once per post per
- * settings snapshot; the store's persisted outcomes keep the decisions
- * stable across restarts, when this class's verdict memo is empty.
- *
  * <p>JP jp24.13.20: every entry point takes the viewer account key
  * (see {@code CurrentViewer}), resolved once per filter pass and
- * threaded through. The followed cache, the diagnostic and the ratio
- * accounting are read and written only inside that account's
- * partition, so one account's TRUSTED can no longer gate another
+ * threaded through. The followed cache and the diagnostic are read
+ * and written only inside that account's partition, so one
+ * account's TRUSTED can no longer gate another
  * account, and a harvest is attributed to the account whose
  * Following response it came from. A null key (viewer unknown)
  * disables the gate entirely and harvests nothing — there is no
@@ -53,26 +39,6 @@ import app.morphe.extension.newx.utils.NewXUtils;
 public final class RecommendKeepGate {
 
     private static final int VERDICT_CACHE_MAX = 512;
-
-    /** Asian-region cosplay/event tags (normalized forms), spec §2.4. */
-    private static final String[] REGION_TAGS = {
-            "コミケ", "となコス", "アコスタ", "池ハロ", "ワンフェス",
-            "漫展", "chinajoy", "萤火虫", "코믹월드", "일러스타",
-    };
-
-    /** Comic Market numbering (C105, C106, ...), a strong JP-region signal. */
-    private static final Pattern COMIKET_NUMBER =
-            Pattern.compile("(?<![a-z0-9])c1[0-9][0-9](?![0-9])");
-
-    /**
-     * Characters that occur only in simplified Chinese (left) or only in
-     * traditional Chinese (right), as counterpart pairs. Either set marks
-     * the text as Chinese; Han-only text with neither stays unresolvable.
-     */
-    private static final String SIMPLIFIED_ONLY =
-            "发国爱这么们无云气产关兴农动华协单卖买乱亚亲亿仅从仓价众优会伤余侠侣侦侧侨俭债倾假偿储儿兑克党兰兵养兽内冈册写军冲决况冻净凉减凑厨厦县参双变叙叶号叹吗吴呈员呜呼咒咙咚咬咳哀哄哇哈响哑哒哔哗哝哥哦哨哩哪哭唉唤唯商啧啪啮啰啸啼喀喂喃善喆喇喋喎喏喔喙喟喧喨丧喫乔单喰喵喻喽嗅吗嗑嗓嗔嗖嗙嗜嗝嗞嗟嗡嗤嗥嗦嗨嗬嗮嗰嗲嗳嗵嗶嗷嗽嘀嘆嘈嘉嘌嘍嘎嘏嘔嘖嘗嘘嘙嘚嘜嘞嘟嘢嘤嘧嘩嘫嘬嘭嘮嘯嘰嘲嘳嘴嘵嘶嘷嘸嘹嘻嘼嘿噁噂噄噅噇噉噌噍噎噏噐噑噓噔噕噖噗噘噙噚噛噜噝噞噠噡噢噣噤噥噦噧器噩噪噫噬噭噮噯噰噱噲噳噴噵噶噷噸噹噺噻噼噽噾噿嚀嚁嚂嚃嚄嚅嚆嚇嚈嚉嚊嚋嚌嚍嚎嚏嚐嚑嚒嚓嚔嚕嚖嚗嚘嚙嚚嚛嚜嚝嚞嚟嚠嚡嚢嚣嚤嚥嚦嚧嚨嚩嚪嚫嚬嚭嚮嚯嚰嚱嚲嚳嚴嚵嚶嚷嚸嚹嚺嚻嚼嚽嚾嚿";
-    private static final String TRADITIONAL_ONLY =
-            "髮國愛這麼們無雲氣產關興農動華協單賣買亂亞親億僅從倉價眾優會傷餘俠侶偵側僑儉債傾假償儲兒兌克黨蘭兵養獸內岡冊寫軍沖決況凍淨涼減湊廚廈縣參雙變敘葉號嘆嗎吳呈員嗚呼咒嚨咚咬咳哀哄哇哈響啞噠嗶嘩噥哥哦哨哩哪哭唉喚唯商嘖啪嚙囉嘯啼喀餵喃善喆喇喋喎喏喔喙喟喧喨喪喫喬單喰喵喻嘍嗅嗎嗑嗓嗔嗖嗙嗜嗝嗞嗟嗡嗤嗥嗦嗨嗬瞄嗰嗲噯嗵嗶嗷嗽嘀嘆嘈嘉嘌嘍嘎嘏嘔嘖嘗噓嘙嘚嘜嘞嘟嘢嚶嘧嘩嘫嘬嘭嘮嘯嘰嘲嘳嘴嘵嘶嘷嘸嘹嘻嘼嘿噁噂噄噅噇噉噌噍噎噏噐噑噓噔噕噖噗噘噙噚噛嚕噝噞噠噡噢噣噤噥噦噧器噩噪噫噬噭噮噯噰噱噲噳噴噵噶噷噸噹噺噻噼噽噾噿嚀嚁嚂嚃嚄嚅嚆嚇嚈嚉嚊嚋嚌嚍嚎嚏嚐嚑嚒嚓嚔嚕嚖嚗嚘嚙嚚嚛嚜嚝嚞嚟嚠嚡嚢囂嚤嚥嚦嚧嚨嚩嚪嚫嚬嚭嚮嚯嚰嚱嚲嚳嚴嚵嚶嚷嚸嚹嚺嚻嚼嚽嚾嚿";
 
     private static final class Verdict {
         final Object snapshot;
@@ -319,14 +285,13 @@ public final class RecommendKeepGate {
      *
      * <p>The check evaluates the page's posts through the ordinary
      * {@link #evaluatePost} path (so its verdicts are exactly the ones
-     * the real pass would produce) after snapshotting the two side
-     * channels a speculative evaluation can touch — the verdict memo
-     * and the account's ratio state. When the guard trips, both are
-     * restored, so the skipped page leaves no trace: no memoized
-     * verdicts, no ratio accounting, and (the caller's side) no drop
+     * the real pass would produce) after snapshotting the verdict
+     * memo, the one side channel a speculative evaluation can touch.
+     * When the guard trips it is restored, so the skipped page leaves
+     * no trace: no memoized verdicts, and (the caller's side) no drop
      * records. When the guard does not trip, the speculative verdicts
      * stand and the real pass replays them from the memo — identical
-     * decisions, no double accounting. Fail-open: any failure means
+     * decisions either way. Fail-open: any failure means
      * "do not trip" and the normal gate applies.
      */
     public static boolean pageYieldGuardTrips(
@@ -340,12 +305,10 @@ public final class RecommendKeepGate {
             if (posts.isEmpty()) {
                 return false;
             }
-            RecommendKeepStore store = RecommendKeepStore.shared();
             Map<String, Verdict> verdictsBefore;
             synchronized (VERDICTS) {
                 verdictsBefore = new LinkedHashMap<>(VERDICTS);
             }
-            Object ratioBefore = store.snapshotRatioState(accountKey);
             int kept = 0;
             for (Object post : posts) {
                 if (evaluatePost(post, access, accountKey) == null) {
@@ -360,7 +323,6 @@ public final class RecommendKeepGate {
                 VERDICTS.clear();
                 VERDICTS.putAll(verdictsBefore);
             }
-            store.restoreRatioState(accountKey, ratioBefore);
             return true;
         } catch (RuntimeException exception) {
             return false;
@@ -422,13 +384,10 @@ public final class RecommendKeepGate {
             String accountKey) {
         String authorId = access.getPostAuthorId(post);
         String screenName = access.getPostAuthorScreenName(post);
-        String postId = NewXUtils.identifierToString(access.getPostId(post));
-        int ratioPercent = options.cosplayRatioPercent;
 
         // Author pass: followed / super-followed / whitelisted always stay.
         if (options.followedAlways) {
             if (isWhitelisted(authorId, screenName)) {
-                store.accountOtherKeep(accountKey, postId, ratioPercent);
                 return null;
             }
             Boolean followed = access.getPostAuthorFollowed(post);
@@ -440,7 +399,6 @@ public final class RecommendKeepGate {
             boolean isFollowed = Boolean.TRUE.equals(followed)
                     || (authorId != null && store.followedCache(accountKey).contains(authorId));
             if (isFollowed) {
-                store.accountOtherKeep(accountKey, postId, ratioPercent);
                 return null;
             }
         }
@@ -453,46 +411,13 @@ public final class RecommendKeepGate {
         String[] fields = {body, quoted, displayName, screenName, bio, tags};
 
         if (snapshot.findPhrase(RecommendKeepStore.ID_TECH, fields) != null) {
-            store.accountOtherKeep(accountKey, postId, ratioPercent);
             return null;
         }
         if (snapshot.findPhrase(RecommendKeepStore.ID_ANIMALS, fields) != null) {
-            store.accountOtherKeep(accountKey, postId, ratioPercent);
             return null;
         }
-        if (snapshot.findPhrase(RecommendKeepStore.ID_COSPLAY, fields) != null) {
-            // Male-cosplayer exclusion (user addition): checked on the
-            // author's self-description and the post text, before the
-            // region/media conditions, with its own reason code.
-            if (snapshot.findExclusion(displayName, bio, body) != null) {
-                return RecommendKeepStore.REASON_COS_MALE;
-            }
-            if (!options.nonAsiaCosplay
-                    && !isAsianRegion(post, access, body, displayName, bio, tags)) {
-                return RecommendKeepStore.REASON_COS_REGION;
-            }
-            if (options.cosMediaRequired && !access.getPostHasMedia(post)) {
-                return RecommendKeepStore.REASON_COS_NOMEDIA;
-            }
-            if (options.followerThresholdEnabled) {
-                long followers = access.getPostAuthorFollowersCount(post);
-                if (followers >= 0 && followers < options.followerThreshold) {
-                    return RecommendKeepStore.REASON_MISS;
-                }
-            }
-            // Ratio cap (jp24.13.10): only posts kept SOLELY via this
-            // cosplay path reach here — tech/animal overlaps returned
-            // above, and followed authors returned in the author pass.
-            if (store.accountCosplay(accountKey, postId, ratioPercent)
-                    == RecommendKeepStore.COSPLAY_DROPPED) {
-                return RecommendKeepStore.REASON_COS_RATIO;
-            }
-            return null;
-        }
-
         boolean textless = isBlank(body) && isBlank(quoted);
         if (textless && options.keepTextless) {
-            store.accountOtherKeep(accountKey, postId, ratioPercent);
             return null;
         }
         return RecommendKeepStore.REASON_MISS;
@@ -507,65 +432,6 @@ public final class RecommendKeepGate {
         } catch (RuntimeException exception) {
             return false;
         }
-    }
-
-    /**
-     * Asian-region signal for the cosplay rule (spec §2.4). The server
-     * language field wins when it carries a definite value; otherwise the
-     * scripts present in the text decide, with Asian cosplay event tags
-     * as corroboration. Han-only text with no variant-specific character
-     * is unresolvable and counts as not Asian.
-     */
-    static boolean isAsianRegion(
-            Object post,
-            TimelineModelAccess access,
-            String body,
-            String displayName,
-            String bio,
-            String tags) {
-        String language = access.getPostLanguage(post);
-        if (language != null && !language.isEmpty()) {
-            String normalized = language.toLowerCase(Locale.ROOT);
-            if (normalized.equals("ja") || normalized.equals("ko")
-                    || normalized.startsWith("zh")) {
-                return true;
-            }
-            if (!normalized.equals("und")) {
-                return false;
-            }
-        }
-        String[] texts = {body, displayName, bio, tags};
-        for (String text : texts) {
-            if (text == null) {
-                continue;
-            }
-            for (int index = 0; index < text.length(); index++) {
-                char c = text.charAt(index);
-                if ((c >= 0x3040 && c <= 0x30FF)          // kana
-                        || (c >= 0xAC00 && c <= 0xD7A3)   // hangul syllables
-                        || (c >= 0x1100 && c <= 0x11FF)   // hangul jamo
-                        || (c >= 0x3130 && c <= 0x318F)   // hangul compat jamo
-                        || SIMPLIFIED_ONLY.indexOf(c) >= 0
-                        || TRADITIONAL_ONLY.indexOf(c) >= 0) {
-                    return true;
-                }
-            }
-        }
-        for (String text : texts) {
-            if (text == null) {
-                continue;
-            }
-            String normalized = PostFilterMatcher.normalize(text);
-            for (String tag : REGION_TAGS) {
-                if (normalized.contains(tag)) {
-                    return true;
-                }
-            }
-            if (COMIKET_NUMBER.matcher(normalized).find()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static String joinHashtags(List<String> hashtags) {
