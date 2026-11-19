@@ -12,6 +12,7 @@ import android.widget.TextView;
 import app.morphe.extension.crimera.settings.SettingsUi;
 import app.morphe.extension.crimera.ui.ButtonView;
 import app.morphe.extension.crimera.ui.DialogView;
+import app.morphe.extension.newx.timeline.CurrentViewer;
 import app.morphe.extension.newx.ui.Theme;
 import app.morphe.extension.shared.Utils;
 
@@ -72,15 +73,20 @@ public final class RecommendKeepSettingsSection {
         });
         container.addView(masterRow);
 
+        // JP jp24.13.20: the diagnostic shown (and reset) is the
+        // CURRENT account's partition; other accounts' partitions
+        // are neither displayed nor touched here.
+        final String viewerKey = CurrentViewer.accountKey();
         TextView diagView = SettingsUi.summaryText(context);
-        diagView.setText(diagnosticText(store));
+        diagView.setText(diagnosticText(store, viewerKey));
         container.addView(diagView);
-        if (store.diagnostic().status == RecommendKeepStore.DIAG_DEAD) {
+        if (viewerKey != null
+                && store.diagnostic(viewerKey).status == RecommendKeepStore.DIAG_DEAD) {
             TextView reset = textButton(context, "フォロー判定をやり直す（診断リセット）");
             reset.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    RecommendKeepStore.shared().resetDiagnostic();
+                    RecommendKeepStore.shared().resetDiagnostic(viewerKey);
                     Utils.showToastShort("診断をリセットしました");
                     buildInto(context, container);
                 }
@@ -278,19 +284,28 @@ public final class RecommendKeepSettingsSection {
         return row;
     }
 
-    private static String diagnosticText(RecommendKeepStore store) {
-        RecommendKeepStore.Diagnostic diagnostic = store.diagnostic();
+    private static String diagnosticText(RecommendKeepStore store, String viewerKey) {
+        if (viewerKey == null) {
+            // JP jp24.13.20: no timeline component has reported the
+            // current account yet (or the user is logged out).
+            return "フォロー判定: アカウント未判定"
+                    + "（タイムラインを開くと判定します）";
+        }
+        RecommendKeepStore.Diagnostic diagnostic = store.diagnostic(viewerKey);
         switch (diagnostic.status) {
             case RecommendKeepStore.DIAG_TRUSTED:
                 return "フォロー判定: 有効（フォロー中タブの投稿 "
-                        + diagnostic.samples + " 件で確認済み）";
+                        + diagnostic.samples + " 件で確認済み／アカウント "
+                        + viewerKey + "）";
             case RecommendKeepStore.DIAG_DEAD:
                 return "フォロー判定: 自動停止中（投稿の著者IDが取得できなかったため、"
-                        + "安全のためフィルターは動作していません）";
+                        + "安全のためフィルターは動作していません）"
+                        + "（アカウント " + viewerKey + "）";
             default:
                 return "フォロー判定: 診断中（フォロー中タブの投稿 "
                         + diagnostic.samples + " / 40 件を確認済み。"
-                        + "診断が終わるまで投稿は落とされません）";
+                        + "診断が終わるまで投稿は落とされません／アカウント "
+                        + viewerKey + "）";
         }
     }
 

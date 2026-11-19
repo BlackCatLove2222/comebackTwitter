@@ -68,12 +68,37 @@ import java.util.Set;
  * signal the gate itself depends on), all diagnostic updates go
  * through the atomic, monotonic {@link #recordHarvestSamples}, and a
  * DIAG_DEAD persisted by the old semantics is reset to UNKNOWN once
- * on load of a pre-schema-3 document (see {@link #migrateSchema3}) so
+ * on load of a pre-schema-3 document (the schema-3 migration) so
  * it re-diagnoses under the new rules; a DEAD produced by the new
  * semantics is stored at schema 3 and persists normally.
+ *
+ * <p>JP jp24.13.20 (schema 4): the followed-ID cache and the
+ * diagnostic are partitioned per account. Up to 13.19 both were a
+ * single app-global union: the cache was dominated by whichever
+ * account's Following pages had been loaded, yet the moment the
+ * diagnostic reached TRUSTED the gate applied that graph to EVERY
+ * account (the 13.18/13.19 For You incidents). Both now live under
+ * {@code accounts: {userId: …}} keyed by the viewer's user ID (see
+ * {@code CurrentViewer}); the ratio-cap document likewise moves to
+ * v2 with per-account spacing/accounting. Categories, exclusion and
+ * options stay shared — they are user settings, not account state.
+ * Migration DISCARDS the union cache and diagnostic: neither carries
+ * any record of which account it was harvested under, so attribution
+ * is impossible, and seeding it into partitions would persist
+ * exactly the wrong-graph contamination this schema exists to
+ * remove. Each account re-warms from UNKNOWN (the gate drops
+ * nothing and the 13.19 pre-scan passes pages while a partition's
+ * diagnostic is not TRUSTED, so the warm-up period is the
+ * pre-13.9 unfiltered state, not a broken one). The ratio v1
+ * document is discarded the same way (the 13.11 precedent).
+ * Partitions are LRU-capped at {@link #PARTITION_CAP}; eviction
+ * loses only warm-up state and fails safe.
  */
 public final class RecommendKeepStore {
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
+
+    /** JP jp24.13.20: version of the separate ratio-cap document. */
+    private static final int RATIO_SCHEMA_VERSION = 2;
 
     /** Phrase-matching semantics version (see class doc). */
     private static final int MATCHER_SEMANTICS_VERSION = 2;
@@ -111,6 +136,9 @@ public final class RecommendKeepStore {
     public static final int DIAG_TARGET_SAMPLES = 40;
 
     private static final int FOLLOWED_CACHE_CAP = 5000;
+
+    /** JP jp24.13.20: LRU cap on per-account partitions. */
+    private static final int PARTITION_CAP = 8;
 
     public interface Persistence {
         String readJson();
@@ -263,6 +291,17 @@ public final class RecommendKeepStore {
             this.hits = hits;
             this.status = status;
         }
+    }
+
+    /**
+     * JP jp24.13.20: one account's partition — its harvested
+     * followed-author ID cache and its diagnostic state. Partitions
+     * are keyed by the viewer's user ID (string form) and held in an
+     * access-ordered map (LRU, see {@link #PARTITION_CAP}).
+     */
+    private static final class AccountData {
+        final LinkedHashSet<String> followedCache = new LinkedHashSet<>();
+        Diagnostic diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
     }
 
     private static final class PhraseMatcher {
@@ -503,8 +542,8 @@ public final class RecommendKeepStore {
     private boolean exclusionEnabled;
     private List<String> exclusionPhrases;
     private Options options;
-    private LinkedHashSet<String> followedCache;
-    private Diagnostic diagnostic;
+    /** JP jp24.13.20: per-account partitions, access-ordered (LRU). */
+    private LinkedHashMap<String, AccountData> accounts;
     /** Set by {@link #fromJson} when a pre-current-schema document was migrated. */
     private boolean schemaMigrated;
 
@@ -636,25 +675,74 @@ public final class RecommendKeepStore {
         publish();
     }
 
-    // ---- followed cache + diagnostic (persisted, but no snapshot change)
+    // ---- per-account followed cache + diagnostic (persisted, no snapshot change)
 
-    public synchronized Set<String> followedCache() {
-        ensureLoaded();
-        return Collections.unmodifiableSet(new LinkedHashSet<>(followedCache));
+    /**
+     * JP jp24.13.20: the partition for {@code key}, materializing it
+     * (and LRU-evicting the eldest partition past the cap) when
+     * {@code create} is set. Read-only lookups never materialize, so
+     * merely displaying an unknown account leaves no trace.
+     */
+    private AccountData partition(String key, boolean create) {
+        AccountData data = accounts.get(key);
+        if (data == null && create) {
+            data = new AccountData();
+            accounts.put(key, data);
+            evictPartitions();
+        }
+        return data;
     }
 
-    /** Adds newly harvested followed-author IDs. Returns how many were new. */
-    public synchronized int addFollowedIds(java.util.Collection<String> ids) {
+    /** Drops eldest partitions (cache + diagnostic + ratio) past the cap. */
+    private void evictPartitions() {
+        boolean evicted = false;
+        while (accounts.size() > PARTITION_CAP) {
+            Iterator<String> iterator = accounts.keySet().iterator();
+            String eldest = iterator.next();
+            iterator.remove();
+            if (ratioLoaded) {
+                ratioAccounts.remove(eldest);
+            }
+            evicted = true;
+        }
+        if (evicted && ratioLoaded) {
+            persistRatio();
+        }
+    }
+
+    /**
+     * The followed-author ID cache of one account's partition. An
+     * unknown (or null) key reads as an empty set and materializes
+     * nothing.
+     */
+    public synchronized Set<String> followedCache(String key) {
         ensureLoaded();
+        if (key == null) {
+            return Collections.emptySet();
+        }
+        AccountData data = partition(key, false);
+        if (data == null) {
+            return Collections.emptySet();
+        }
+        return Collections.unmodifiableSet(new LinkedHashSet<>(data.followedCache));
+    }
+
+    /** Adds newly harvested followed-author IDs to a partition. Returns how many were new. */
+    public synchronized int addFollowedIds(String key, java.util.Collection<String> ids) {
+        ensureLoaded();
+        if (key == null) {
+            return 0;
+        }
+        AccountData data = partition(key, true);
         int added = 0;
         for (String id : ids) {
             if (id == null || id.isEmpty()) {
                 continue;
             }
-            if (followedCache.size() >= FOLLOWED_CACHE_CAP) {
+            if (data.followedCache.size() >= FOLLOWED_CACHE_CAP) {
                 break;
             }
-            if (followedCache.add(id)) {
+            if (data.followedCache.add(id)) {
                 added++;
             }
         }
@@ -664,9 +752,14 @@ public final class RecommendKeepStore {
         return added;
     }
 
-    public synchronized Diagnostic diagnostic() {
+    /** One account's diagnostic; unknown (or null) keys read as UNKNOWN (0, 0). */
+    public synchronized Diagnostic diagnostic(String key) {
         ensureLoaded();
-        return diagnostic;
+        if (key == null) {
+            return new Diagnostic(0, 0, DIAG_UNKNOWN);
+        }
+        AccountData data = partition(key, false);
+        return data == null ? new Diagnostic(0, 0, DIAG_UNKNOWN) : data.diagnostic;
     }
 
     /**
@@ -683,10 +776,21 @@ public final class RecommendKeepStore {
      * {@link #DIAG_TARGET_SAMPLES}: hits &gt; 0 trusts the bridge,
      * zero hits declares it dead.
      *
-     * @return the diagnostic state after the merge
+     * <p>JP jp24.13.20: the merge is scoped to one account's
+     * partition (materialized on first contribution); interleaved
+     * passes for different accounts touch disjoint state, so a late
+     * merge for account A can never roll back account B.
+     *
+     * @return the partition's diagnostic state after the merge
      */
-    public synchronized Diagnostic recordHarvestSamples(int deltaSamples, int deltaHits) {
+    public synchronized Diagnostic recordHarvestSamples(
+            String key, int deltaSamples, int deltaHits) {
         ensureLoaded();
+        if (key == null) {
+            return new Diagnostic(0, 0, DIAG_UNKNOWN);
+        }
+        AccountData data = partition(key, true);
+        Diagnostic diagnostic = data.diagnostic;
         if (diagnostic.status != DIAG_UNKNOWN) {
             return diagnostic;
         }
@@ -696,23 +800,47 @@ public final class RecommendKeepStore {
         if (samples >= DIAG_TARGET_SAMPLES) {
             status = hits > 0 ? DIAG_TRUSTED : DIAG_DEAD;
         }
-        diagnostic = new Diagnostic(samples, hits, status);
+        data.diagnostic = new Diagnostic(samples, hits, status);
         persist();
-        return diagnostic;
+        return data.diagnostic;
     }
 
-    public synchronized void resetDiagnostic() {
+    /** Resets one account's diagnostic; unknown (or null) keys are a no-op. */
+    public synchronized void resetDiagnostic(String key) {
         ensureLoaded();
-        diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
+        if (key == null) {
+            return;
+        }
+        AccountData data = partition(key, false);
+        if (data == null) {
+            return;
+        }
+        data.diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
         persist();
     }
 
     // ---- cosplay ratio cap (jp24.13.10; separate document, no snapshot change)
+    // JP jp24.13.20: the ratio document is v2 — spacing counter and
+    // accounted outcomes are per-account partitions, because "kept
+    // because the author is followed" is an account-dependent outcome
+    // and replaying it across accounts defeats the cap's stability
+    // purpose. A v1 document carries no attribution and is discarded
+    // on load (the 13.11 matcher-discard precedent).
 
     private boolean ratioLoaded;
-    private int ratioPercent = -1;
-    private int ratioSinceLast;
-    private LinkedHashMap<String, Integer> ratioAccounted = new LinkedHashMap<>();
+    private final LinkedHashMap<String, RatioState> ratioAccounts = new LinkedHashMap<>();
+
+    /** One account's ratio-cap state within the v2 ratio document. */
+    private static final class RatioState {
+        int percent;
+        int sinceLast;
+        final LinkedHashMap<String, Integer> accounted = new LinkedHashMap<>();
+
+        RatioState(int percent) {
+            this.percent = percent;
+            this.sinceLast = gapForPercent(percent);
+        }
+    }
 
     /**
      * Non-cosplay keeps that must separate two kept cosplay posts for the
@@ -734,40 +862,47 @@ public final class RecommendKeepStore {
     /**
      * Records a kept post that is NOT a cosplay-path keep (followed /
      * whitelisted author, tech, animals, textless-keep) for the ratio
-     * spacing counter. Each post counts once: a post already accounted —
-     * in this process or before a restart — never counts again. Posts
-     * without an ID cannot be tracked and are ignored here.
+     * spacing counter of one account's partition. Each post counts
+     * once: a post already accounted — in this process or before a
+     * restart — never counts again. Posts without an ID cannot be
+     * tracked and are ignored here.
      */
-    public synchronized void accountOtherKeep(String postId, int percent) {
-        if (postId == null || postId.isEmpty()) {
+    public synchronized void accountOtherKeep(String key, String postId, int percent) {
+        if (key == null || postId == null || postId.isEmpty()) {
             return;
         }
-        ensureRatioLoaded(percent);
-        if (ratioAccounted.containsKey(postId)) {
+        RatioState state = ratioState(key, percent);
+        if (state.accounted.containsKey(postId)) {
             return;
         }
-        putAccounted(postId, ACCT_KEEP_OTHER);
-        if (ratioSinceLast < Integer.MAX_VALUE) {
-            ratioSinceLast++;
+        putAccounted(state, postId, ACCT_KEEP_OTHER);
+        if (state.sinceLast < Integer.MAX_VALUE) {
+            state.sinceLast++;
         }
         persistRatio();
     }
 
     /**
-     * Decides a cosplay-path keep against the ratio cap and records the
-     * outcome, so the same post always gets the same answer — across list
-     * re-emissions and across app restarts. Returns {@link #COSPLAY_KEPT}
-     * or {@link #COSPLAY_DROPPED}. A post already accounted as kept (by
+     * Decides a cosplay-path keep against the ratio cap of one
+     * account's partition and records the outcome, so the same post
+     * always gets the same answer — across list re-emissions and
+     * across app restarts. Returns {@link #COSPLAY_KEPT} or
+     * {@link #COSPLAY_DROPPED}. A post already accounted as kept (by
      * any path) stays kept and is never counted twice; a post already
-     * ratio-dropped stays dropped. Posts without an ID are decided on the
-     * counters alone and not recorded; a kept one still resets the spacing
-     * so untracked posts cannot cluster.
+     * ratio-dropped stays dropped. Posts without an ID are decided on
+     * the counters alone and not recorded; a kept one still resets
+     * the spacing so untracked posts cannot cluster. A null key is
+     * never ratio-dropped (fail-open; the gate does not call this
+     * with an unknown viewer).
      */
-    public synchronized int accountCosplay(String postId, int percent) {
-        ensureRatioLoaded(percent);
+    public synchronized int accountCosplay(String key, String postId, int percent) {
+        if (key == null) {
+            return COSPLAY_KEPT;
+        }
+        RatioState state = ratioState(key, percent);
         boolean tracked = postId != null && !postId.isEmpty();
         if (tracked) {
-            Integer prior = ratioAccounted.get(postId);
+            Integer prior = state.accounted.get(postId);
             if (prior != null) {
                 return prior == ACCT_DROP_RATIO ? COSPLAY_DROPPED : COSPLAY_KEPT;
             }
@@ -778,64 +913,88 @@ public final class RecommendKeepStore {
         } else if (percent >= 100) {
             keep = true;
         } else {
-            keep = ratioSinceLast >= gapForPercent(percent);
+            keep = state.sinceLast >= gapForPercent(percent);
         }
         if (!tracked) {
             if (keep && percent > 0 && percent < 100) {
-                ratioSinceLast = 0;
+                state.sinceLast = 0;
                 persistRatio();
             }
             return keep ? COSPLAY_KEPT : COSPLAY_DROPPED;
         }
         if (keep) {
-            putAccounted(postId, ACCT_KEEP_COSPLAY);
-            ratioSinceLast = 0;
+            putAccounted(state, postId, ACCT_KEEP_COSPLAY);
+            state.sinceLast = 0;
         } else {
-            putAccounted(postId, ACCT_DROP_RATIO);
+            putAccounted(state, postId, ACCT_DROP_RATIO);
         }
         persistRatio();
         return keep ? COSPLAY_KEPT : COSPLAY_DROPPED;
     }
 
-    /** Current spacing counter (non-cosplay keeps since the last kept cosplay). */
-    public synchronized int ratioSinceLast(int percent) {
-        ensureRatioLoaded(percent);
-        return ratioSinceLast;
+    /** Current spacing counter of one account's partition. */
+    public synchronized int ratioSinceLast(String key, int percent) {
+        if (key == null) {
+            return gapForPercent(percent);
+        }
+        return ratioState(key, percent).sinceLast;
     }
 
-    /** The recorded ratio outcome for a post, or null when unaccounted. */
-    public synchronized Integer accountedOutcome(String postId, int percent) {
-        ensureRatioLoaded(percent);
-        return postId == null ? null : ratioAccounted.get(postId);
+    /** The recorded ratio outcome for a post in one account's partition, or null. */
+    public synchronized Integer accountedOutcome(String key, String postId, int percent) {
+        if (key == null || postId == null) {
+            return null;
+        }
+        return ratioState(key, percent).accounted.get(postId);
     }
 
-    private void putAccounted(String postId, int outcome) {
-        ratioAccounted.put(postId, outcome);
-        while (ratioAccounted.size() > ACCOUNTED_CAP) {
-            Iterator<String> iterator = ratioAccounted.keySet().iterator();
+    private static void putAccounted(RatioState state, String postId, int outcome) {
+        state.accounted.put(postId, outcome);
+        while (state.accounted.size() > ACCOUNTED_CAP) {
+            Iterator<String> iterator = state.accounted.keySet().iterator();
             iterator.next();
             iterator.remove();
         }
     }
 
     /**
-     * Loads the ratio document when the requested percent differs from
-     * the loaded one. A stored document whose percent does not match is
-     * discarded: changing the cap restarts the accounting from a clean,
-     * spacing-satisfied state (the settings save also republishes the
-     * snapshot, which invalidates memoized verdicts, so previously
-     * dropped posts are re-decided under the new cap). The same applies
-     * to a document written under older phrase-matching semantics
-     * (jp24.13.11): its recorded outcomes were decided by a different
-     * matcher and are re-decided, never replayed.
+     * The ratio state for one account at the requested percent,
+     * loading the v2 document on first use. A partition stored under
+     * a different percent is restarted: changing the cap restarts
+     * that account's accounting from a clean, spacing-satisfied state
+     * (the settings save also republishes the snapshot, which
+     * invalidates memoized verdicts, so previously dropped posts are
+     * re-decided under the new cap). Other accounts' partitions are
+     * untouched by the change.
      */
-    private void ensureRatioLoaded(int percent) {
-        if (ratioLoaded && ratioPercent == percent) {
+    private RatioState ratioState(String key, int percent) {
+        ensureLoaded();
+        ensureRatioLoaded();
+        RatioState state = ratioAccounts.get(key);
+        if (state == null) {
+            state = new RatioState(percent);
+            ratioAccounts.put(key, state);
+            return state;
+        }
+        if (state.percent != percent) {
+            state.percent = percent;
+            state.sinceLast = gapForPercent(percent);
+            state.accounted.clear();
+        }
+        return state;
+    }
+
+    /**
+     * Loads the v2 ratio document once. A document that is not v2 —
+     * the pre-13.20 v1 form, or one written under older
+     * phrase-matching semantics (jp24.13.11) — is discarded whole:
+     * its outcomes were decided for another matcher or without any
+     * account attribution, and are re-decided, never replayed.
+     */
+    private void ensureRatioLoaded() {
+        if (ratioLoaded) {
             return;
         }
-        ratioAccounted = new LinkedHashMap<>();
-        ratioSinceLast = gapForPercent(percent);
-        ratioPercent = percent;
         ratioLoaded = true;
         String stored = persistence.readRatioJson();
         if (stored == null || stored.isEmpty()) {
@@ -843,53 +1002,74 @@ public final class RecommendKeepStore {
         }
         try {
             JSONObject root = new JSONObject(stored);
-            if (root.optInt("percent", -1) != percent) {
+            if (root.optInt("version", 1) != RATIO_SCHEMA_VERSION) {
                 return;
             }
-            // JP jp24.13.11: outcomes recorded under older phrase-matching
-            // semantics must not be replayed — the matcher version is part
-            // of the document identity, exactly like the percent. A stale
-            // document is discarded and accounting restarts clean.
             if (root.optInt("matcher", 1) != MATCHER_SEMANTICS_VERSION) {
                 return;
             }
-            ratioSinceLast = root.optInt("sinceLast", ratioSinceLast);
-            JSONArray entries = root.optJSONArray("accounted");
-            if (entries != null) {
-                for (int index = 0; index < entries.length(); index++) {
-                    JSONObject entry = entries.getJSONObject(index);
-                    String id = entry.optString("id", "");
-                    int outcome = entry.optInt("o", 0);
-                    if (!id.isEmpty()
-                            && outcome >= ACCT_KEEP_OTHER
-                            && outcome <= ACCT_DROP_RATIO) {
-                        ratioAccounted.put(id, outcome);
+            JSONObject accountsJson = root.optJSONObject("accounts");
+            if (accountsJson == null) {
+                return;
+            }
+            Iterator<String> keys = accountsJson.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                JSONObject entry = accountsJson.optJSONObject(key);
+                if (entry == null) {
+                    continue;
+                }
+                RatioState state = new RatioState(entry.optInt("percent", -1));
+                state.sinceLast = entry.optInt("sinceLast", state.sinceLast);
+                JSONArray accounted = entry.optJSONArray("accounted");
+                if (accounted != null) {
+                    for (int index = 0; index < accounted.length(); index++) {
+                        JSONObject object = accounted.getJSONObject(index);
+                        String id = object.optString("id", "");
+                        int outcome = object.optInt("o", 0);
+                        if (!id.isEmpty()
+                                && outcome >= ACCT_KEEP_OTHER
+                                && outcome <= ACCT_DROP_RATIO) {
+                            state.accounted.put(id, outcome);
+                        }
                     }
                 }
+                ratioAccounts.put(key, state);
             }
+            // JP jp24.13.20: a partition whose main (cache + diagnostic)
+            // partition was LRU-evicted while this document was not
+            // loaded loses its ratio state too — eviction is whole.
+            ratioAccounts.keySet().retainAll(accounts.keySet());
         } catch (JSONException | RuntimeException exception) {
             NewXLogger.printException(
                     () -> "RecommendKeepStore: ratio data could not be read",
                     exception);
-            ratioAccounted = new LinkedHashMap<>();
-            ratioSinceLast = gapForPercent(percent);
+            ratioAccounts.clear();
         }
     }
 
     private void persistRatio() {
         try {
             JSONObject root = new JSONObject();
-            root.put("percent", ratioPercent);
+            root.put("version", RATIO_SCHEMA_VERSION);
             root.put("matcher", MATCHER_SEMANTICS_VERSION);
-            root.put("sinceLast", ratioSinceLast);
-            JSONArray entries = new JSONArray();
-            for (Map.Entry<String, Integer> entry : ratioAccounted.entrySet()) {
-                JSONObject object = new JSONObject();
-                object.put("id", entry.getKey());
-                object.put("o", entry.getValue().intValue());
-                entries.put(object);
+            JSONObject accountsJson = new JSONObject();
+            for (Map.Entry<String, RatioState> partition : ratioAccounts.entrySet()) {
+                RatioState state = partition.getValue();
+                JSONObject entry = new JSONObject();
+                entry.put("percent", state.percent);
+                entry.put("sinceLast", state.sinceLast);
+                JSONArray accounted = new JSONArray();
+                for (Map.Entry<String, Integer> outcome : state.accounted.entrySet()) {
+                    JSONObject object = new JSONObject();
+                    object.put("id", outcome.getKey());
+                    object.put("o", outcome.getValue().intValue());
+                    accounted.put(object);
+                }
+                entry.put("accounted", accounted);
+                accountsJson.put(partition.getKey(), entry);
             }
-            root.put("accounted", entries);
+            root.put("accounts", accountsJson);
             persistence.writeRatioJson(root.toString());
         } catch (JSONException exception) {
             NewXLogger.printException(
@@ -947,8 +1127,7 @@ public final class RecommendKeepStore {
             exclusionEnabled = true;
             exclusionPhrases = new ArrayList<>(presetExclusionPhrases());
             options = Options.defaults();
-            followedCache = new LinkedHashSet<>();
-            diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
+            accounts = newAccountsMap();
             snapshot = new Snapshot(categories, exclusionEnabled, exclusionPhrases, options);
             persist();
             persistence.writeSeeded(true);
@@ -958,8 +1137,7 @@ public final class RecommendKeepStore {
         exclusionEnabled = true;
         exclusionPhrases = new ArrayList<>();
         options = Options.defaults();
-        followedCache = new LinkedHashSet<>();
-        diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
+        accounts = newAccountsMap();
         if (stored != null && !stored.isEmpty()) {
             try {
                 fromJson(new JSONObject(stored));
@@ -969,7 +1147,7 @@ public final class RecommendKeepStore {
                         exception);
                 categories = new ArrayList<>();
                 exclusionPhrases = new ArrayList<>();
-                followedCache = new LinkedHashSet<>();
+                accounts = newAccountsMap();
             }
         }
         if (schemaMigrated) {
@@ -1033,17 +1211,32 @@ public final class RecommendKeepStore {
         opts.put("followerThreshold", options.followerThreshold);
         opts.put("cosplayRatioPercent", options.cosplayRatioPercent);
         root.put("options", opts);
-        JSONArray cache = new JSONArray();
-        for (String id : followedCache) {
-            cache.put(id);
+        JSONObject accountsJson = new JSONObject();
+        JSONArray lru = new JSONArray();
+        for (Map.Entry<String, AccountData> partition : accounts.entrySet()) {
+            AccountData data = partition.getValue();
+            JSONObject entry = new JSONObject();
+            JSONArray cache = new JSONArray();
+            for (String id : data.followedCache) {
+                cache.put(id);
+            }
+            entry.put("followedCache", cache);
+            JSONObject diag = new JSONObject();
+            diag.put("samples", data.diagnostic.samples);
+            diag.put("hits", data.diagnostic.hits);
+            diag.put("status", data.diagnostic.status);
+            entry.put("diag", diag);
+            accountsJson.put(partition.getKey(), entry);
+            lru.put(partition.getKey());
         }
-        root.put("followedCache", cache);
-        JSONObject diag = new JSONObject();
-        diag.put("samples", diagnostic.samples);
-        diag.put("hits", diagnostic.hits);
-        diag.put("status", diagnostic.status);
-        root.put("diag", diag);
+        root.put("accounts", accountsJson);
+        root.put("accountsLru", lru);
         return root;
+    }
+
+    /** Access-ordered (LRU) partition map: eldest first when iterated. */
+    private static LinkedHashMap<String, AccountData> newAccountsMap() {
+        return new LinkedHashMap<>(16, 0.75f, true);
     }
 
     /**
@@ -1137,24 +1330,61 @@ public final class RecommendKeepStore {
                     opts.optLong("followerThreshold", defaults.followerThreshold),
                     opts.optInt("cosplayRatioPercent", defaults.cosplayRatioPercent));
         }
-        JSONArray cache = root.optJSONArray("followedCache");
-        if (cache != null) {
-            for (int index = 0; index < cache.length(); index++) {
-                String id = cache.optString(index, "");
-                if (!id.isEmpty()) {
-                    followedCache.add(id);
+        if (root.optInt("version", 1) >= 4) {
+            parseAccounts(root);
+        }
+        migrateSchema2(root);
+        migrateSchema4(root);
+    }
+
+    /** Reads the schema-4 {@code accounts} object in LRU order. */
+    private void parseAccounts(JSONObject root) {
+        JSONObject accountsJson = root.optJSONObject("accounts");
+        if (accountsJson == null) {
+            return;
+        }
+        List<String> order = new ArrayList<>();
+        JSONArray lru = root.optJSONArray("accountsLru");
+        if (lru != null) {
+            for (int index = 0; index < lru.length(); index++) {
+                String key = lru.optString(index, "");
+                if (!key.isEmpty() && accountsJson.has(key) && !order.contains(key)) {
+                    order.add(key);
                 }
             }
         }
-        JSONObject diag = root.optJSONObject("diag");
-        if (diag != null) {
-            diagnostic = new Diagnostic(
-                    diag.optInt("samples", 0),
-                    diag.optInt("hits", 0),
-                    diag.optInt("status", DIAG_UNKNOWN));
+        Iterator<String> keys = accountsJson.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!order.contains(key)) {
+                order.add(key);
+            }
         }
-        migrateSchema2(root);
-        migrateSchema3(root);
+        for (String key : order) {
+            JSONObject entry = accountsJson.optJSONObject(key);
+            if (entry == null) {
+                continue;
+            }
+            AccountData data = new AccountData();
+            JSONArray cache = entry.optJSONArray("followedCache");
+            if (cache != null) {
+                for (int index = 0; index < cache.length(); index++) {
+                    String id = cache.optString(index, "");
+                    if (!id.isEmpty() && data.followedCache.size() < FOLLOWED_CACHE_CAP) {
+                        data.followedCache.add(id);
+                    }
+                }
+            }
+            JSONObject diag = entry.optJSONObject("diag");
+            if (diag != null) {
+                data.diagnostic = new Diagnostic(
+                        diag.optInt("samples", 0),
+                        diag.optInt("hits", 0),
+                        diag.optInt("status", DIAG_UNKNOWN));
+            }
+            accounts.put(key, data);
+        }
+        evictPartitions();
     }
 
     /**
@@ -1195,26 +1425,26 @@ public final class RecommendKeepStore {
     }
 
     /**
-     * JP jp24.13.18 (schema 3): a DIAG_DEAD persisted by the pre-13.18
-     * diagnostic is not evidence that the author-ID bridge is dead —
-     * the old diagnostic counted only the model friendship flag, which
-     * Following responses do not populate, so it tripped on healthy
-     * devices. On load of a pre-schema-3 document such a DEAD is reset
-     * to UNKNOWN once, so the state re-diagnoses under the
-     * harvestable-ID rule. Exactly-once is keyed on the document
-     * version: this load re-persists at schema 3 (via
-     * {@code schemaMigrated}), and a DEAD produced by the new semantics
-     * is always stored at schema 3, so it is never reset. TRUSTED and
-     * UNKNOWN states carry over unchanged.
+     * JP jp24.13.20 (schema 4): the pre-13.20 document held ONE
+     * app-global followed-ID cache and diagnostic (top-level
+     * {@code followedCache} / {@code diag}). Neither records which
+     * account it was harvested under, so attribution to a partition
+     * is impossible in principle; both are simply never read here,
+     * and the document is re-persisted at schema 4 with empty
+     * partitions (exactly-once via {@code schemaMigrated}, as with
+     * the earlier migrations). Each account re-diagnoses from
+     * UNKNOWN under the 13.18 harvestable-ID rule and rebuilds its
+     * cache from its own Following tab; while a partition is not
+     * TRUSTED the gate drops nothing for it. This subsumes the
+     * schema-3 migration (jp24.13.18): its one-time reset of an
+     * old-semantics DIAG_DEAD is moot when the diagnostic itself is
+     * discarded.
      */
-    private void migrateSchema3(JSONObject root) {
+    private void migrateSchema4(JSONObject root) {
         if (root.optInt("version", 1) >= SCHEMA_VERSION) {
             return;
         }
         schemaMigrated = true;
-        if (diagnostic.status == DIAG_DEAD) {
-            diagnostic = new Diagnostic(0, 0, DIAG_UNKNOWN);
-        }
     }
 
     private static List<String> phrasesOf(JSONObject object) throws JSONException {
