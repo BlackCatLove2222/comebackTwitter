@@ -345,29 +345,23 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 
 [SPEC.md](SPEC.md) §33 の実装。新規ファミリーは classes21、入口は B33 の `filterExploreItems`:
 
-1. **保存層・設定（classes21、新規）**: `postfilter/RecommendKeepStore`（永続 JSON `newx.content.recommend_keep`、schema 1。カテゴリ定義＝技術系／動物／コスプレの語彙・除外語・オプション。フォロー済み著者 ID キャッシュ上限 5,000・期限なし、診断カウンタ、判定メモ）と `postfilter/RecommendKeepSettingsSection`（「ツイートフィルター」画面へのセクション。組み込みは PostFilterFragment への呼び出し追加）を新設する。全文は [src/](src/) に同梱
-2. **判定役（classes21、新規）**: `timeline/RecommendKeepGate`。`isEnabledFor(type)`（対象は FOR_YOU / EXPLORE_FOR_YOU のみ、マスター ON かつ診断 TRUSTED のとき真）、`harvestFollowed(type, items, access)`（FOLLOWING / RANKED_FOLLOWING 応答から著者 ID を収穫）、`evaluatePost(...)`（フォロー済み→キープ／興味カテゴリ一致→キープ＋理由なし／コスプレ条件→理由付き判定／それ以外→ `REC_KEEP_MISS` で落下）
+1. **保存層・設定（classes21、新規）**: `postfilter/RecommendKeepStore`（永続 JSON `newx.content.recommend_keep`、schema 1。カテゴリ定義＝技術系／動物の語彙・オプション。フォロー済み著者 ID キャッシュ上限 5,000・期限なし、診断カウンタ、判定メモ）と `postfilter/RecommendKeepSettingsSection`（「ツイートフィルター」画面へのセクション。組み込みは PostFilterFragment への呼び出し追加）を新設する。全文は [src/](src/) に同梱
+2. **判定役（classes21、新規）**: `timeline/RecommendKeepGate`。`isEnabledFor(type)`（対象は FOR_YOU / EXPLORE_FOR_YOU のみ、マスター ON かつ診断 TRUSTED のとき真）、`harvestFollowed(type, items, access)`（FOLLOWING / RANKED_FOLLOWING 応答から著者 ID を収穫）、`evaluatePost(...)`（フォロー済み→キープ／興味カテゴリ一致→キープ＋理由なし／それ以外→ `REC_KEEP_MISS` で落下）
 3. **モデルブリッジ（classes21）**: `TimelineModelAccess` に著者ナビゲーションを追加する。既存の汎用探索は4段までしか降りないため、アイテム→投稿結果→文脈付き投稿→正規投稿→著者→最小ユーザーの**5段を決定的に辿る**専用経路と、表示名取得 `getPostAuthorNameForFilter`（旧ブリッジはタイムラインアイテムから null を返すため新設）、友情情報（`isFollowedByMe` / `isSuperFollowedByMe`）、正規投稿のメディア有無・言語のアクセサを用意する。すべて反射＋例外ガード
 4. **入口（classes19）**: B33 の `filterExploreItems` 内で、対象タイプなら収穫（フォロー中タイプ）またはゲート判定（おすすめタイプ）を行う。落下は FilteredRepliesStore に理由付きで記録し、「フィルタされた返信」ダイアログに `REC_KEEP_*` のラベル分岐を追加する
 
-検証: 新規3クラスの JVM ハーネス（分類・地域判定・診断の遷移）全 PASS。classes19 / classes21 の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes19.dex ＋ classes21.dex のみ。診断が想定外に DEAD へ落ちる経路が無いことをハーネスで確認する（この診断定義自体は B44 で再定義される）
+検証: 新規3クラスの JVM ハーネス（分類・診断の遷移）全 PASS。classes19 / classes21 の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS、CRC 差分が classes19.dex ＋ classes21.dex のみ。診断が想定外に DEAD へ落ちる経路が無いことをハーネスで確認する（この診断定義自体は B44 で再定義される）
 
-### B36. コスプレ割合キャップ（jp24.13.10、classes21）
+### B36. （公開版では削除）
 
-[SPEC.md](SPEC.md) §34 の実装。B35 の2クラス内だけで完結する:
-
-1. `RecommendKeepStore` に割合台帳の**別文書**（`newx.content.recommend_keep.ratio`、記録上限 2,000 件）を追加する。設定スナップショットとは独立に読み書きし、割合の変更時は台帳をリセットする
-2. `RecommendKeepGate` のコスプレ・キープ分岐に間隔判定を入れる: 「コスプレのみでキープ」された投稿だけを数え、間隔 N = round((100−p)/p)（既定 p=20 → N=4）を超える分は理由 `REC_KEEP_COS_RATIO` で落とす。カウンタは FOR_YOU / EXPLORE_FOR_YOU で共有（ゲート側の単一カウンタ）
-3. 設定セクションに「コスプレの割合上限」（0〜50%、0% でコスプレ全落とし）を追加する
-
-検証: JVM ハーネスで間隔境界（19%/20%/21% 相当、0%、50%）と台帳リセットを確認する。CRC 差分が classes21.dex のみ
+公開版ではこの手順を提供しない（SPEC §34 の注記参照）。
 
 ### B37. 英字トークンの単語境界マッチと種の見直し（jp24.13.11、classes21）
 
 [SPEC.md](SPEC.md) §35 の実装。`RecommendKeepStore` の語句マッチャーのみ:
 
 1. マッチャーの一致判定に境界条件を入れる: 純 ASCII 語句は、一致位置の前後の文字が ASCII 英数字でない場合にのみ一致とする。非 ASCII 語句は従来どおり部分文字列
-2. 技術系の種から "AI" を削除し、schema 1→2 の移行で永続済み "ai" を一度だけ除去する（移行ガードは schema 2 を明示的に対象にする — 後続のバージョン定数に引きずられないこと）。割合台帳の文書にもマッチャー版数を持たせ、旧版の台帳は破棄する
+2. 技術系の種から "AI" を削除し、schema 1→2 の移行で永続済み "ai" を一度だけ除去する（移行ガードは schema 2 を明示的に対象にする — 後続のバージョン定数に引きずられないこと）
 
 検証: JVM ハーネスで境界ケース（単語内包・CamelCase ハッシュタグ・複数形）を確認する。CRC 差分が classes21.dex のみ
 
@@ -455,7 +449,7 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 
 1. **閲覧者ブリッジ（classes19、本体側）**: タイムライン応答の構築クラスが保持する閲覧者 ID を読む合成メソッドは既存のものを再利用し、新規の通知メソッドを追加する。読み取った ID を拡張側 `CurrentViewer.notifyAccount(J)` へ渡す。呼び出しはコンストラクタ内の安全な位置（閲覧者フィールドの初期化直後、`this` が有効で以降の全利用に先行する地点）に1命令挿入する。⚠ コンストラクタ末尾は `this` が別オブジェクトで上書き済みの場合があり、その位置への `invoke-virtual {p0}` は VerifyError になる — 必ずフィールド初期化直後に入れること。ブリッジ本体にも自己回復用の通知を埋め込み、コンストラクタ経由でない生成でも閲覧者が伝わるようにする
 2. **フィルタのスレッド化（classes19）**: ゲート分岐の頭で `CurrentViewer.accountKey()` を1回だけ解決し、収穫・有効判定・プリスキャン・分類の全呼び出しへ明示的に渡す。レジスタ飽和したメソッドでは引数を連続窓へステージングして range 形式に変換する（ステージング先の生存範囲は生存解析で確認すること）
-3. **ストア／ゲート／設定（classes21）**: `RecommendKeepStore` を schema 4 に上げる（フォローキャッシュ・診断・割合台帳をアカウント別パーティション配下へ、LRU 上限 8）。移行は旧和集合データを**破棄**して再収穫する（パーティションへの種入れはしない）。判定メモのヒット条件にアカウントキーを加える。未判定（キー null）ではゲート完全 OFF・収穫 no-op とし、和集合へのフォールバックは作らない。設定の診断表示・リセットは現在のアカウントに対して行う
+3. **ストア／ゲート／設定（classes21）**: `RecommendKeepStore` を schema 4 に上げる（フォローキャッシュ・診断をアカウント別パーティション配下へ、LRU 上限 8）。移行は旧和集合データを**破棄**して再収穫する（パーティションへの種入れはしない）。判定メモのヒット条件にアカウントキーを加える。未判定（キー null）ではゲート完全 OFF・収穫 no-op とし、和集合へのフォールバックは作らない。設定の診断表示・リセットは現在のアカウントに対して行う
 
 検証: JVM ハーネスで移行（破棄・一度きり）／分離／未判定（収穫で文書自体が作られないこと）／判定メモの漏れ／比率の分離／LRU 追い出し／入出力（export にアカウント別データが含まれないこと）を確認する。両 dex の正規化 diff が対象ファイルのみ、レジスタ型ゲート PASS
 
