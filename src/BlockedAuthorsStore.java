@@ -108,6 +108,31 @@ public final class BlockedAuthorsStore {
     }
 
     /**
+     * JP jp24.13.24.5: additive (merge) counterpart of
+     * {@link #replaceAll}: unions the given IDs into the designated
+     * set. Entries are normalized defensively; invalid ones are
+     * dropped. Always raises the SEEDED flag, for the same reason as
+     * replaceAll. Returns how many IDs were actually added.
+     */
+    public int addAll(Collection<String> authorIds) {
+        Set<String> updated = new LinkedHashSet<>(snapshot());
+        int added = 0;
+        if (authorIds != null) {
+            for (String authorId : authorIds) {
+                String normalized = normalize(authorId);
+                if (!normalized.isEmpty() && updated.add(normalized)) {
+                    added++;
+                }
+            }
+        }
+        if (added > 0) {
+            setting().save(Collections.unmodifiableSet(updated));
+        }
+        Holder.SEEDED.save(true);
+        return added;
+    }
+
+    /**
      * JP jp24.13.17: validates one designated-author ID as typed into
      * the settings editor or read from an imported bundle. Returns the
      * normalized ID, or null when invalid. Rules: digits only, 1–19

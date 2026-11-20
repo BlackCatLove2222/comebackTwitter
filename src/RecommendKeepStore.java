@@ -837,6 +837,58 @@ public final class RecommendKeepStore {
         publish();
     }
 
+    /**
+     * JP jp24.13.24.5: additive (merge) counterpart of
+     * {@link #replaceProjectionFromImport}. Categories match by ID:
+     * phrases are unioned (existing first, imported additions
+     * appended, duplicates by normalized form dropped) and the
+     * existing category's name and enabled flag win; unmatched
+     * imported categories are appended as validated. ALL options
+     * are left untouched (existing options win entirely). The
+     * followed-ID cache and the follower-gate diagnostics live
+     * outside the projection and are kept as-is.
+     * Returns {categoriesAdded, phrasesAdded}.
+     */
+    public synchronized int[] mergeProjectionFromImport(
+            List<Category> importedCategories) {
+        ensureLoaded();
+        List<Category> merged = new ArrayList<>(categories);
+        int categoriesAdded = 0;
+        int phrasesAdded = 0;
+        for (Category imported : importedCategories) {
+            int index = indexOf(merged, imported.id);
+            if (index < 0) {
+                merged.add(imported);
+                categoriesAdded++;
+                phrasesAdded += imported.phrases.size();
+                continue;
+            }
+            Category existing = merged.get(index);
+            List<String> union = new ArrayList<>(existing.phrases);
+            List<String> seenNormalized = new ArrayList<>();
+            for (String phrase : existing.phrases) {
+                seenNormalized.add(PostFilterMatcher.normalize(phrase));
+            }
+            int added = 0;
+            for (String phrase : imported.phrases) {
+                String normalized = PostFilterMatcher.normalize(phrase);
+                if (seenNormalized.contains(normalized)) {
+                    continue;
+                }
+                seenNormalized.add(normalized);
+                union.add(phrase);
+                added++;
+            }
+            if (added > 0) {
+                merged.set(index, existing.withPhrases(union));
+                phrasesAdded += added;
+            }
+        }
+        categories = merged;
+        publish();
+        return new int[]{categoriesAdded, phrasesAdded};
+    }
+
     private void fromJson(JSONObject root) throws JSONException {
         JSONArray categoryArray = root.getJSONArray("categories");
         List<Category> loaded = new ArrayList<>();

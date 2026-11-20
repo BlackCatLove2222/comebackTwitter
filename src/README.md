@@ -168,6 +168,10 @@ jp24.13.17 で設定画面の ID エディタ（[../SPEC.md](../SPEC.md) §41、
 - エクスポート対象は muteCategories / keywordRules / recommendKeep（投影のみ）の3セクション。**blockedAuthors はエクスポートに決して含めません**（プライバシー上の決定。インポート側は手書きファイルの blockedAuthors セクションを受け付け、無効エントリは件数報告付きでスキップします）
 - インポートは2段階（全セクション検証 → 有効なものだけ適用）。muteCategories は全置換＋欠けたプリセットの既定値補完で、検証時に `preset` フラグと晒し検出器の付け替え（なりすまし）を強制補正します
 - ファイル／クリップボードの両経路、結果ダイアログ、画面側の配線（ボタン配置・onActivityResult チェーン・onResume 再構築）は同梱しません — 手順は BUILD.md B43 を参照
+- jp24.13.24.4 でファイル入出力のリクエストコードを移行（取り込み 0x5071 / 書き出し 0x5072。[../BUILD.md](../BUILD.md) B56、[../SPEC.md](../SPEC.md) §54）。jp24.13.24.5 で「追加（マージ）」取り込みを追加（B57、SPEC §55）。同梱の本ファイルは両対応後の状態です
+
+## DrawerItemFilter.java — jp24.13.24.6 ドロワー項目フィルターのキャッシュ化
+ドロワーの非表示判定（[../SPEC.md](../SPEC.md) §56、[../BUILD.md](../BUILD.md) B58）の全文。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/misc/DrawerItemFilter;`。上流 NewX の同名クラスを、非表示オプションの解決結果をキャッシュする形に差し替える。
 
 ## 同梱していないもの
 

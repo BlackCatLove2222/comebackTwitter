@@ -57,13 +57,20 @@ import app.morphe.extension.crimera.ui.DialogView;
  * re-completed; blockedAuthors replaces wholesale and always raises
  * the store's SEEDED flag so the bundled defaults cannot merge back in
  * on a fresh install.
+ *
+ * <p>JP jp24.13.24.5: an additive （追加/マージ) import mode joins the
+ * original replace mode. After the bundle validates, both routes
+ * (file and paste) offer the choice through one shared dialog; the
+ * default is replace. Merge unions phrases/rules/IDs into the current
+ * state (existing categories' flags win, keep options are never
+ * overwritten) — see the stores' mergeFromImport methods.
  */
 public final class FilterBundleImportExport {
     public static final String FORMAT = "comebacktwitter-filter-bundle";
     public static final int BUNDLE_VERSION = 1;
-    private static final String EXPORTED_BY = "jp24.13.17";
-    private static final int IMPORT_REQUEST_CODE = 0x5042;
-    private static final int EXPORT_REQUEST_CODE = 0x5052;
+    private static final String EXPORTED_BY = "jp24.13.24.5";
+    private static final int IMPORT_REQUEST_CODE = 0x5071;
+    private static final int EXPORT_REQUEST_CODE = 0x5072;
     private static final int MAX_IMPORT_BYTES = 1024 * 1024;
 
     private FilterBundleImportExport() {
@@ -112,17 +119,21 @@ public final class FilterBundleImportExport {
         public final boolean bundleError;
         public final String error;
         public final List<SectionResult> sections;
+        /** JP jp24.13.24.5: true when the additive （追加） mode applied the bundle. */
+        public final boolean merge;
 
         private ImportOutcome(String error) {
             this.bundleError = true;
             this.error = error;
             this.sections = new ArrayList<>();
+            this.merge = false;
         }
 
-        private ImportOutcome(List<SectionResult> sections) {
+        private ImportOutcome(List<SectionResult> sections, boolean merge) {
             this.bundleError = false;
             this.error = null;
             this.sections = sections;
+            this.merge = merge;
         }
 
         public int appliedCount() {
@@ -140,6 +151,7 @@ public final class FilterBundleImportExport {
                 return error;
             }
             StringBuilder builder = new StringBuilder();
+            builder.append(merge ? "方法: 追加（マージ）" : "方法: 上書き（置き換え）");
             for (SectionResult section : sections) {
                 if (builder.length() > 0) {
                     builder.append('\n');
@@ -160,31 +172,106 @@ public final class FilterBundleImportExport {
         int skipped;
     }
 
+    /**
+     * JP jp24.13.24.5: a bundle that passed phase-1 validation. The UI
+     * holds one of these between validation and the mode choice, so the
+     * two-phase discipline (validate everything, then apply) survives
+     * the dialog round trip: nothing is applied from here until
+     * {@link #applyValidated} runs, in either mode.
+     */
+    public static final class ValidatedBundle {
+        public final boolean bundleError;
+        public final String error;
+        final boolean hasMute;
+        final List<MuteCategory> muteCategories;
+        final String muteError;
+        final boolean hasRules;
+        final List<PostFilterRule> rules;
+        final String rulesError;
+        final boolean hasKeep;
+        final KeepImport keep;
+        final String keepError;
+        final boolean hasBlocked;
+        final BlockedImport blocked;
+        final String blockedError;
+
+        private ValidatedBundle(String error) {
+            this.bundleError = true;
+            this.error = error;
+            this.hasMute = false;
+            this.muteCategories = null;
+            this.muteError = null;
+            this.hasRules = false;
+            this.rules = null;
+            this.rulesError = null;
+            this.hasKeep = false;
+            this.keep = null;
+            this.keepError = null;
+            this.hasBlocked = false;
+            this.blocked = null;
+            this.blockedError = null;
+        }
+
+        private ValidatedBundle(
+                boolean hasMute, List<MuteCategory> muteCategories, String muteError,
+                boolean hasRules, List<PostFilterRule> rules, String rulesError,
+                boolean hasKeep, KeepImport keep, String keepError,
+                boolean hasBlocked, BlockedImport blocked, String blockedError) {
+            this.bundleError = false;
+            this.error = null;
+            this.hasMute = hasMute;
+            this.muteCategories = muteCategories;
+            this.muteError = muteError;
+            this.hasRules = hasRules;
+            this.rules = rules;
+            this.rulesError = rulesError;
+            this.hasKeep = hasKeep;
+            this.keep = keep;
+            this.keepError = keepError;
+            this.hasBlocked = hasBlocked;
+            this.blocked = blocked;
+            this.blockedError = blockedError;
+        }
+    }
+
+    /** Replace-mode import (the original jp24.13.17 behavior). */
     public static ImportOutcome importBundle(String text) {
+        return importBundle(text, false);
+    }
+
+    /**
+     * JP jp24.13.24.5: import with an explicit mode — {@code merge}
+     * false replaces (original behavior), true merges additively.
+     */
+    public static ImportOutcome importBundle(String text, boolean merge) {
+        return applyValidated(validateBundle(text), merge);
+    }
+
+    /** Phase 1 only: parse and validate every present section; no side effects. */
+    public static ValidatedBundle validateBundle(String text) {
         if (text == null || text.trim().isEmpty()) {
-            return new ImportOutcome("テキストが空です");
+            return new ValidatedBundle("テキストが空です");
         }
         if (text.length() > MAX_IMPORT_BYTES) {
-            return new ImportOutcome("データが大きすぎます（1MBまで）");
+            return new ValidatedBundle("データが大きすぎます（1MBまで）");
         }
         JSONObject root;
         try {
             root = new JSONObject(text);
         } catch (JSONException exception) {
-            return new ImportOutcome("JSONとして読み込めませんでした");
+            return new ValidatedBundle("JSONとして読み込めませんでした");
         }
         if (!FORMAT.equals(root.optString("format", ""))) {
-            return new ImportOutcome("フィルターバンドルの形式ではありません");
+            return new ValidatedBundle("フィルターバンドルの形式ではありません");
         }
         if (root.optInt("version", -1) != BUNDLE_VERSION) {
-            return new ImportOutcome("対応していないバンドルのバージョンです");
+            return new ValidatedBundle("対応していないバンドルのバージョンです");
         }
         JSONObject sections = root.optJSONObject("sections");
         if (sections == null) {
-            return new ImportOutcome("sections がありません");
+            return new ValidatedBundle("sections がありません");
         }
 
-        // Phase 1: validate every present section; no side effects.
         List<MuteCategory> muteCategories = null;
         String muteError = null;
         boolean hasMute = sections.has("muteCategories");
@@ -227,20 +314,38 @@ public final class FilterBundleImportExport {
             }
         }
         if (!hasMute && !hasRules && !hasKeep && !hasBlocked) {
-            return new ImportOutcome("取り込めるセクションがありませんでした");
+            return new ValidatedBundle("取り込めるセクションがありませんでした");
         }
+        return new ValidatedBundle(
+                hasMute, muteCategories, muteError,
+                hasRules, rules, rulesError,
+                hasKeep, keep, keepError,
+                hasBlocked, blocked, blockedError);
+    }
 
-        // Phase 2: apply the sections that validated.
+    /** Phase 2: apply the sections that validated, in the chosen mode. */
+    public static ImportOutcome applyValidated(ValidatedBundle validated, boolean merge) {
+        if (validated.bundleError) {
+            return new ImportOutcome(validated.error);
+        }
         List<SectionResult> results = new ArrayList<>();
-        if (hasMute) {
-            if (muteError != null) {
+        if (validated.hasMute) {
+            if (validated.muteError != null) {
                 results.add(new SectionResult("カテゴリ別ミュート", false,
-                        "取り込めませんでした（" + muteError + "）"));
+                        "取り込めませんでした（" + validated.muteError + "）"));
             } else {
                 try {
-                    int count = MuteCategoryStore.shared().replaceAllFromImport(muteCategories);
-                    results.add(new SectionResult("カテゴリ別ミュート", true,
-                            count + "件を取り込みました"));
+                    if (merge) {
+                        int[] counts = MuteCategoryStore.shared()
+                                .mergeFromImport(validated.muteCategories);
+                        results.add(new SectionResult("カテゴリ別ミュート", true,
+                                "カテゴリ+" + counts[0] + " / 単語+" + counts[1]));
+                    } else {
+                        int count = MuteCategoryStore.shared()
+                                .replaceAllFromImport(validated.muteCategories);
+                        results.add(new SectionResult("カテゴリ別ミュート", true,
+                                count + "件を取り込みました"));
+                    }
                 } catch (Exception exception) {
                     NewXLogger.printException(() -> "FilterBundleImportExport mute apply failed", exception);
                     results.add(new SectionResult("カテゴリ別ミュート", false,
@@ -248,15 +353,25 @@ public final class FilterBundleImportExport {
                 }
             }
         }
-        if (hasRules) {
-            if (rulesError != null) {
+        if (validated.hasRules) {
+            if (validated.rulesError != null) {
                 results.add(new SectionResult("キーワードフィルター", false,
-                        "取り込めませんでした（" + rulesError + "）"));
+                        "取り込めませんでした（" + validated.rulesError + "）"));
             } else {
                 try {
-                    PostFilterRuleStore.shared().replaceAllFromImport(rules);
-                    results.add(new SectionResult("キーワードフィルター", true,
-                            rules.size() + "件を取り込みました"));
+                    if (merge) {
+                        int[] counts = PostFilterRuleStore.shared()
+                                .mergeFromImport(validated.rules);
+                        String detail = "ルール+" + counts[0];
+                        if (counts[1] > 0) {
+                            detail += "（重複" + counts[1] + "件をスキップ）";
+                        }
+                        results.add(new SectionResult("キーワードフィルター", true, detail));
+                    } else {
+                        PostFilterRuleStore.shared().replaceAllFromImport(validated.rules);
+                        results.add(new SectionResult("キーワードフィルター", true,
+                                validated.rules.size() + "件を取り込みました"));
+                    }
                 } catch (Exception exception) {
                     NewXLogger.printException(() -> "FilterBundleImportExport rules apply failed", exception);
                     results.add(new SectionResult("キーワードフィルター", false,
@@ -264,16 +379,24 @@ public final class FilterBundleImportExport {
                 }
             }
         }
-        if (hasKeep) {
-            if (keepError != null) {
+        if (validated.hasKeep) {
+            if (validated.keepError != null) {
                 results.add(new SectionResult("おすすめキープ", false,
-                        "取り込めませんでした（" + keepError + "）"));
+                        "取り込めませんでした（" + validated.keepError + "）"));
             } else {
                 try {
-                    RecommendKeepStore.shared().replaceProjectionFromImport(
-                            keep.categories, keep.options);
-                    String detail = "カテゴリ" + keep.categories.size() + "件を取り込みました";
-                    results.add(new SectionResult("おすすめキープ", true, detail));
+                    if (merge) {
+                        int[] counts = RecommendKeepStore.shared().mergeProjectionFromImport(
+                                validated.keep.categories);
+                        results.add(new SectionResult("おすすめキープ", true,
+                                "カテゴリ+" + counts[0] + " / 単語+" + counts[1]));
+                    } else {
+                        RecommendKeepStore.shared().replaceProjectionFromImport(
+                                validated.keep.categories, validated.keep.options);
+                        results.add(new SectionResult("おすすめキープ", true,
+                                "カテゴリ" + validated.keep.categories.size()
+                                        + "件を取り込みました"));
+                    }
                 } catch (Exception exception) {
                     NewXLogger.printException(() -> "FilterBundleImportExport keep apply failed", exception);
                     results.add(new SectionResult("おすすめキープ", false,
@@ -281,18 +404,27 @@ public final class FilterBundleImportExport {
                 }
             }
         }
-        if (hasBlocked) {
-            if (blockedError != null) {
+        if (validated.hasBlocked) {
+            if (validated.blockedError != null) {
                 results.add(new SectionResult("指定アカウント", false,
-                        "取り込めませんでした（" + blockedError + "）"));
+                        "取り込めませんでした（" + validated.blockedError + "）"));
             } else {
                 try {
-                    BlockedAuthorsStore.shared().replaceAll(blocked.ids);
-                    String detail = blocked.ids.size() + "件を取り込みました";
-                    if (blocked.skipped > 0) {
-                        detail += "（不正な" + blocked.skipped + "件をスキップ）";
+                    if (merge) {
+                        int added = BlockedAuthorsStore.shared().addAll(validated.blocked.ids);
+                        String detail = "ID+" + added + "件を追加";
+                        if (validated.blocked.skipped > 0) {
+                            detail += "（不正な" + validated.blocked.skipped + "件をスキップ）";
+                        }
+                        results.add(new SectionResult("指定アカウント", true, detail));
+                    } else {
+                        BlockedAuthorsStore.shared().replaceAll(validated.blocked.ids);
+                        String detail = validated.blocked.ids.size() + "件を取り込みました";
+                        if (validated.blocked.skipped > 0) {
+                            detail += "（不正な" + validated.blocked.skipped + "件をスキップ）";
+                        }
+                        results.add(new SectionResult("指定アカウント", true, detail));
                     }
-                    results.add(new SectionResult("指定アカウント", true, detail));
                 } catch (Exception exception) {
                     NewXLogger.printException(() -> "FilterBundleImportExport blocked apply failed", exception);
                     results.add(new SectionResult("指定アカウント", false,
@@ -300,7 +432,7 @@ public final class FilterBundleImportExport {
                 }
             }
         }
-        return new ImportOutcome(results);
+        return new ImportOutcome(results, merge);
     }
 
     private static KeepImport validateRecommendKeep(JSONObject section) throws JSONException {
@@ -554,16 +686,46 @@ public final class FilterBundleImportExport {
         dialog.addButton(cancel);
         ButtonView apply = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "取り込む");
         apply.setOnClickListener(view -> {
-            ImportOutcome outcome = importBundle(input.getText().toString());
-            if (outcome.bundleError) {
-                error.setText(outcome.error);
+            ValidatedBundle validated = validateBundle(input.getText().toString());
+            if (validated.bundleError) {
+                error.setText(validated.error);
                 error.setVisibility(View.VISIBLE);
                 return;
             }
             dialog.dismiss();
-            showSummary(context, outcome);
+            showModeChooser(context, validated);
         });
         dialog.addButton(apply);
+        dialog.show();
+    }
+
+    /**
+     * JP jp24.13.24.5: the shared import-mode choice, offered by both
+     * the file and the paste route after validation has passed.
+     * 「上書き（置き換え）」 is listed first and stays the default
+     * behavior; 「追加（マージ）」 unions into the current settings.
+     */
+    private static void showModeChooser(final Context context, final ValidatedBundle validated) {
+        final DialogView dialog = new DialogView(context)
+                .setTitle("フィルター設定をインポート")
+                .setSubtitle("取り込み方法を選んでください");
+        ButtonView replace = new ButtonView(context, ButtonView.ButtonStyle.TEXT,
+                "上書き（置き換え）");
+        replace.setOnClickListener(view -> {
+            dialog.dismiss();
+            showSummary(context, applyValidated(validated, false));
+        });
+        dialog.addButton(replace);
+        ButtonView merge = new ButtonView(context, ButtonView.ButtonStyle.TEXT,
+                "追加（マージ）");
+        merge.setOnClickListener(view -> {
+            dialog.dismiss();
+            showSummary(context, applyValidated(validated, true));
+        });
+        dialog.addButton(merge);
+        ButtonView cancel = new ButtonView(context, ButtonView.ButtonStyle.TEXT, "キャンセル");
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        dialog.addButton(cancel);
         dialog.show();
     }
 
@@ -626,11 +788,11 @@ public final class FilterBundleImportExport {
                 throw new IOException("Could not open the selected file");
             }
             String text = new String(readAll(input), StandardCharsets.UTF_8);
-            ImportOutcome outcome = importBundle(text);
-            if (outcome.bundleError) {
-                Utils.showToastShort(outcome.error);
+            ValidatedBundle validated = validateBundle(text);
+            if (validated.bundleError) {
+                Utils.showToastShort(validated.error);
             } else {
-                showSummary(activity, outcome);
+                showModeChooser(activity, validated);
             }
         } catch (Exception exception) {
             NewXLogger.printException(() -> "Filter bundle import failed", exception);

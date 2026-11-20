@@ -894,6 +894,68 @@ public final class MuteCategoryStore {
     }
 
     /**
+     * JP jp24.13.24.5: additive (merge) counterpart of
+     * {@link #replaceAllFromImport}. Categories match by ID: phrases
+     * are unioned (existing first, imported additions appended,
+     * duplicates by normalized form dropped) and the existing
+     * category's name, toggles, scopes and detector flags win.
+     * Unmatched imported categories are appended as validated (the
+     * preset/detector forgery corrections from
+     * {@link #validateImport} already applied); presets missing from
+     * the store are re-completed with their bundled defaults, as in
+     * replace mode. Returns {categoriesAdded, phrasesAdded}.
+     */
+    public synchronized int[] mergeFromImport(List<MuteCategory> validated) {
+        ensureLoaded();
+        List<MuteCategory> merged = new ArrayList<>(snapshot.categories());
+        int categoriesAdded = 0;
+        int phrasesAdded = 0;
+        for (MuteCategory imported : validated) {
+            MuteCategory existing = null;
+            for (MuteCategory candidate : merged) {
+                if (candidate.id.equals(imported.id)) {
+                    existing = candidate;
+                    break;
+                }
+            }
+            if (existing == null) {
+                merged.add(imported);
+                categoriesAdded++;
+                phrasesAdded += imported.phrases.size();
+                continue;
+            }
+            List<String> union = new ArrayList<>(existing.phrases);
+            List<String> seenNormalized = new ArrayList<>();
+            for (String phrase : existing.phrases) {
+                seenNormalized.add(PostFilterMatcher.normalize(phrase));
+            }
+            int added = 0;
+            for (String phrase : imported.phrases) {
+                String normalized = PostFilterMatcher.normalize(phrase);
+                if (seenNormalized.contains(normalized)) {
+                    continue;
+                }
+                seenNormalized.add(normalized);
+                union.add(phrase);
+                added++;
+            }
+            if (added > 0) {
+                merged.set(merged.indexOf(existing), existing.withPhrases(union));
+                phrasesAdded += added;
+            }
+        }
+        for (MuteCategory preset : presetCategories()) {
+            if (!containsId(merged, preset.id)) {
+                merged.add(preset);
+                categoriesAdded++;
+                phrasesAdded += preset.phrases.size();
+            }
+        }
+        publish(merged);
+        return new int[]{categoriesAdded, phrasesAdded};
+    }
+
+    /**
      * JP jp24.13.17: validates one imported muteCategories section and
      * returns the corrected category list; throws JSONException with an
      * item-indexed message on the first structural problem.
