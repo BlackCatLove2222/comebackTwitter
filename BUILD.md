@@ -554,6 +554,16 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 - **連携ゲート（jp24.13.24.3 で新設、必須）**: 拡張コードが発行する全メソッド／フィールド参照について、参照先シグネチャが出荷 dex 群＋フレームワーク表面に実在することを照合する（`linkage_check`）。コンパイル用スタブやハーネスのフェイクは出荷形状に合わせ、存在しない API 表面を提供しない。jp24.13.22.2（フレームワーク API）と jp24.13.24.3（設定保存 API）の2度の「コンパイルが通るが実機に無いメソッド」事故を受けた必須工程で、旧ビルドに対して実機バグだけを正確に検出することを確認済み
 - **アライメントゲート（jp24.13.24.2 で新設、再梱包時に必須）**: 最終署名 APK で STORED .so 全件のデータ開始位置が 4096 の倍数であることを実測する（B54）。署名は配置をずらし得るため、署名後の実物で測ること
 
+### B56. フィルターバンドルのリクエストコード移行（jp24.13.24.4、classes21）
+`FilterBundleImportExport` のファイル入出力リクエストコード定数を、取り込み 0x5042 → **0x5071**、書き出し 0x5052 → **0x5072** に変更する（上流 SettingsBackupRestore との衝突回避。コード空間の全数確認: BackupRestore 0x5042/0x5052、FeatureSwitch 0x5046/0x5056、UpdateFont 0x5061/0x5062、本バンドル 0x5071/0x5072）。src/FilterBundleImportExport.java は移行後の状態。
+
+### B57. フィルターバンドルの「追加（マージ）」取り込み（jp24.13.24.5、classes21）
+`FilterBundleImportExport` に検証→モード選択（上書き／追加／キャンセル）→適用の流れと完了サマリを追加し、各ストアにマージ用メソッドを追加する（`MuteCategoryStore.mergeFromImport`、`PostFilterRuleStore.mergeFromImport`、`BlockedAuthorsStore.addAll`、`RecommendKeepStore.mergeProjectionFromImport`）。意味論は SPEC §55。あわせて書き出しの `exportedBy` を "jp24.13.24.5" に更新。src/ の各ファイルは本手順適用後の状態。
+
+### B58. ドロワー項目フィルターと ResourceUtils のキャッシュ化（jp24.13.24.6、classes20 / classes21）
+- classes21: `app/morphe/extension/newx/misc/DrawerItemFilter` を src/DrawerItemFilter.java の内容に差し替える（非表示オプション → 解決済みタイトル集合の static キャッシュ。キー = 集合のコピー＋先頭ロケールの言語タグ。二重チェックロック。項目単位の失敗隔離は維持）。
+- classes20: `app/morphe/extension/shared/ResourceUtils` は Java ソースが存在しないため smali を直接編集する。`getIdentifier(Context, ResourceType, String)`（getStringOrThrow の中央経路）に static ConcurrentHashMap キャッシュを追加する。キー = 型文字列 + ":" + 名前。成功結果のみ保存し、例外経路は従来どおり handleException を経て 0 を返しキャッシュに入れない。`<clinit>` でマップを初期化する static フィールドを追加する（他の static 初期値は従来どおり）。getSystemIdentifier（android パッケージ側）は対象外。
+
 ---
 
 *本書は公開用の手順書です。数値・対象の正は [SPEC.md](SPEC.md)。版ごとの経緯は [CHANGELOG.md](CHANGELOG.md)。*
