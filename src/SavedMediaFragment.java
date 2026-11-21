@@ -16,6 +16,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.util.Log;
@@ -29,9 +31,10 @@ import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.MediaController;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.widget.VideoView;
 
 import androidx.annotation.Nullable;
@@ -101,8 +104,13 @@ public final class SavedMediaFragment extends CustomScreenFragment {
 
     private TextView statusText;
     private LinearLayout grantPanel;
+    private LinearLayout tabBar;
     private GridLayout grid;
     private ButtonView retryButton;
+    // jp24.13.24.7: tab state + the last load, kept so tab switches
+    // and post-delete re-renders never rescan.
+    private int currentTab = SavedMediaSaf.TAB_IMAGE;
+    private LoadResult lastResult;
     private volatile boolean destroyed;
     private boolean authInProgress;
     private boolean authenticated;
@@ -117,9 +125,14 @@ public final class SavedMediaFragment extends CustomScreenFragment {
         final long size;
         final boolean video;
         final boolean saf;
+        // jp24.13.24.7: the granted tree a SAF item was enumerated
+        // from (null for MediaStore/index items). The delete scope
+        // guard requires it, so a SAF delete can only ever target a
+        // document inside an enumerated tree.
+        final Uri tree;
 
         MediaItem(Uri uri, String name, String mime, long added, long size,
-                  boolean video, boolean saf) {
+                  boolean video, boolean saf, Uri tree) {
             this.uri = uri;
             this.name = name;
             this.mime = mime;
@@ -127,6 +140,7 @@ public final class SavedMediaFragment extends CustomScreenFragment {
             this.size = size;
             this.video = video;
             this.saf = saf;
+            this.tree = tree;
         }
     }
 
@@ -141,11 +155,17 @@ public final class SavedMediaFragment extends CustomScreenFragment {
         final List<MediaItem> items;
         final FolderStatus images;
         final FolderStatus videos;
+        // jp24.13.24.7: string forms of the trees this load resolved
+        // as usable and enumerated; the delete scope guard checks a
+        // SAF item's tree against this set.
+        final java.util.Set<String> safTrees;
 
-        LoadResult(List<MediaItem> items, FolderStatus images, FolderStatus videos) {
+        LoadResult(List<MediaItem> items, FolderStatus images, FolderStatus videos,
+                   java.util.Set<String> safTrees) {
             this.items = items;
             this.images = images;
             this.videos = videos;
+            this.safTrees = safTrees;
         }
     }
 
@@ -174,6 +194,13 @@ public final class SavedMediaFragment extends CustomScreenFragment {
         grantPanel = new LinearLayout(context);
         grantPanel.setOrientation(LinearLayout.VERTICAL);
         content.addView(grantPanel, new LinearLayout.LayoutParams(-1, -2));
+
+        tabBar = new LinearLayout(context);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBar.setVisibility(View.GONE);
+        LinearLayout.LayoutParams tabBarParams = new LinearLayout.LayoutParams(-1, -2);
+        tabBarParams.topMargin = dpToPx(context, 8f);
+        content.addView(tabBar, tabBarParams);
 
         grid = new GridLayout(context);
         grid.setColumnCount(3);
@@ -377,10 +404,11 @@ public final class SavedMediaFragment extends CustomScreenFragment {
 
         // 1. SAF enumeration (primary): granted folder trees, read directly.
         List<MediaItem> safItems = new ArrayList<>();
+        java.util.Set<String> grantedTrees = new java.util.HashSet<>();
         FolderStatus imageStatus =
-                collectSaf(context, resolver, MediaKind.IMAGES, false, safItems);
+                collectSaf(context, resolver, MediaKind.IMAGES, false, safItems, grantedTrees);
         FolderStatus videoStatus =
-                collectSaf(context, resolver, MediaKind.VIDEOS, true, safItems);
+                collectSaf(context, resolver, MediaKind.VIDEOS, true, safItems, grantedTrees);
 
         // 2. MediaStore staged enumeration (supplement).
         List<MediaItem> storeItems = new ArrayList<>();
@@ -391,10 +419,22 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                 "Movies/Twitter", true, storeItems, storeSeen);
 
         // 3. Extension index (supplement): entries are pruned when the
-        // underlying row is gone. Rows the staged queries already
+        // underlying file is gone. Rows the staged queries already
         // listed are represented by those items; other surviving rows
         // are probed for their real name/size so the merge can still
         // dedupe them against a SAF copy of the same file.
+        // jp24.13.24.7.2: a failed row probe no longer prunes on its
+        // own — on the user's device the MediaStore rows for the
+        // .nomedia image folder are not queryable even though the
+        // files are on disk (the SAF stage above lists them). The
+        // download conflict path consults this index as its existence
+        // record for the built-in folders, so dropping an entry whose
+        // file the SAF stage just saw would blind it again. An entry
+        // is pruned only when neither the row nor the file is found.
+        java.util.Set<String> safFileKeys = new java.util.HashSet<>();
+        for (MediaItem safItem : safItems) {
+            safFileKeys.add(fileKey(safItem.name, safItem.video));
+        }
         List<MediaItem> indexItems = new ArrayList<>();
         List<SavedMediaStore.Entry> verified = new ArrayList<>();
         for (SavedMediaStore.Entry entry : SavedMediaStore.entries(context)) {
@@ -410,7 +450,17 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                 continue;
             }
             String[] probed = probeRow(resolver, uri);
-            if (probed == null) continue;
+            if (probed == null) {
+                // Row gone or unqueryable: keep the entry when the SAF
+                // stage saw the same file on disk (see the stage-3 note
+                // above); the SAF item already represents it in the
+                // merge, so no index item is added here.
+                boolean entryVideo = entry.mime != null && entry.mime.startsWith("video/");
+                if (safFileKeys.contains(fileKey(entry.name, entryVideo))) {
+                    verified.add(entry);
+                }
+                continue;
+            }
             verified.add(entry);
             long size = -1;
             try {
@@ -425,7 +475,8 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                     entry.added,
                     size,
                     video,
-                    false));
+                    false,
+                    null));
         }
         SavedMediaStore.replaceAll(context, verified);
 
@@ -447,7 +498,7 @@ public final class SavedMediaFragment extends CustomScreenFragment {
         }
         merged.sort((first, second) -> SavedMediaSaf.compareItems(
                 first.added, first.name, second.added, second.name));
-        return new LoadResult(merged, imageStatus, videoStatus);
+        return new LoadResult(merged, imageStatus, videoStatus, grantedTrees);
     }
 
     // ---- SAF enumeration ----
@@ -464,7 +515,8 @@ public final class SavedMediaFragment extends CustomScreenFragment {
             ContentResolver resolver,
             MediaKind kind,
             boolean video,
-            List<MediaItem> out) {
+            List<MediaItem> out,
+            java.util.Set<String> grantedTrees) {
         FolderStatus status = new FolderStatus();
         List<Uri> trees = new ArrayList<>();
 
@@ -516,6 +568,7 @@ public final class SavedMediaFragment extends CustomScreenFragment {
 
         int before = out.size();
         for (Uri tree : trees) {
+            grantedTrees.add(tree.toString());
             if (enumerateTree(resolver, tree, video, out, status)) {
                 status.anyTree = true;
             }
@@ -600,7 +653,8 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                             modified,
                             size,
                             video,
-                            true));
+                            true,
+                            tree));
                 }
             }
         }
@@ -719,7 +773,8 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                         addedSeconds * 1000L,
                         size,
                         video,
-                        false));
+                        false,
+                        null));
                 added++;
             }
         } catch (Throwable ignored) {
@@ -735,6 +790,11 @@ public final class SavedMediaFragment extends CustomScreenFragment {
      * sibling folders such as "Pictures/Twitter2/" do not match.
      * Android-free; exercised by the JVM harness.
      */
+    /** (name, kind) key used to cross-check index entries against the SAF stage. */
+    static String fileKey(String name, boolean video) {
+        return (video ? "v:" : "i:") + (name == null ? "" : name);
+    }
+
     static boolean matchesFolder(String relativePath, String folder) {
         if (relativePath == null || folder == null) return false;
         String path = relativePath.endsWith("/") ? relativePath : relativePath + "/";
@@ -776,8 +836,10 @@ public final class SavedMediaFragment extends CustomScreenFragment {
 
     private void renderMedia(LoadResult result) {
         if (grid == null) return;
+        lastResult = result;
         grid.removeAllViews();
         if (grantPanel != null) grantPanel.removeAllViews();
+        if (tabBar != null) tabBar.setVisibility(View.GONE);
         List<MediaItem> items = result.items;
         int imageState = folderState(result.images);
         int videoState = folderState(result.videos);
@@ -809,7 +871,6 @@ public final class SavedMediaFragment extends CustomScreenFragment {
             return;
         }
 
-        setStatus("");
         if (imageProblem || videoProblem) {
             // Partial grant: what could be listed is listed, and the
             // missing folder is called out instead of staying silent.
@@ -822,13 +883,55 @@ public final class SavedMediaFragment extends CustomScreenFragment {
             }
         }
         Context context = requireContext();
+        // jp24.13.24.7: tabs filter the already-enumerated set; no
+        // rescan happens on a tab switch.
+        renderTabs(context, items);
+        List<MediaItem> visible = new ArrayList<>();
+        for (MediaItem item : items) {
+            if (SavedMediaSaf.tabFor(item.mime, item.name, item.video) == currentTab) {
+                visible.add(item);
+            }
+        }
+        setStatus(visible.isEmpty() ? "このタブに表示するメディアはありません" : "");
         int cell = Math.max(
                 dpToPx(context, 96f),
                 context.getResources().getDisplayMetrics().widthPixels / 3
                         - dpToPx(context, 8f));
-        for (MediaItem item : items) {
+        for (MediaItem item : visible) {
             grid.addView(cellView(context, item), cellParams(context, cell));
         }
+    }
+
+    /** jp24.13.24.7: rebuilds the 画像 / 動画 / GIF tab row with per-tab counts. */
+    private void renderTabs(Context context, List<MediaItem> items) {
+        if (tabBar == null) return;
+        tabBar.removeAllViews();
+        int[] tabs = {SavedMediaSaf.TAB_IMAGE, SavedMediaSaf.TAB_VIDEO, SavedMediaSaf.TAB_GIF};
+        String[] labels = {"画像", "動画", "GIF"};
+        int[] counts = new int[3];
+        for (MediaItem item : items) {
+            counts[SavedMediaSaf.tabFor(item.mime, item.name, item.video)]++;
+        }
+        for (int i = 0; i < tabs.length; i++) {
+            final int tab = tabs[i];
+            ButtonView button = new ButtonView(
+                    context,
+                    tab == currentTab
+                            ? ButtonView.ButtonStyle.FILLED
+                            : ButtonView.ButtonStyle.TONAL,
+                    labels[i] + "（" + counts[tab] + "）");
+            button.setOnClickListener(view -> {
+                if (currentTab != tab) {
+                    currentTab = tab;
+                    if (lastResult != null) renderMedia(lastResult);
+                }
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1f);
+            int margin = dpToPx(context, 2f);
+            params.setMargins(margin, 0, margin, 0);
+            tabBar.addView(button, params);
+        }
+        tabBar.setVisibility(View.VISIBLE);
     }
 
     /** Full grant prompt block for one folder, used when nothing is listed. */
@@ -923,8 +1026,107 @@ public final class SavedMediaFragment extends CustomScreenFragment {
                 openImage(item);
             }
         });
+        // jp24.13.24.7: long-press deletes the file (with a
+        // confirmation), scoped to the enumerated folders.
+        cell.setOnLongClickListener(view -> {
+            confirmDelete(item);
+            return true;
+        });
         loadThumbnail(item, image);
         return cell;
+    }
+
+    /** jp24.13.24.7: delete confirmation, in the ConflictResolver dialog shape. */
+    private void confirmDelete(MediaItem item) {
+        Activity activity = getActivity();
+        if (activity == null || destroyed) return;
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        int padding = dpToPx(activity, 24f);
+        body.setPadding(padding, 0, padding, 0);
+
+        TextView nameView = SettingsUi.summaryText(activity);
+        nameView.setText(item.name);
+        body.addView(nameView, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView noteView = SettingsUi.summaryText(activity);
+        noteView.setText("このファイルを削除しますか？（フォルダ内から完全に削除されます）");
+        body.addView(noteView, new LinearLayout.LayoutParams(-1, -2));
+
+        DialogView dialog = new DialogView(activity)
+                .setTitle("ファイルを削除")
+                .setBodyView(body);
+        ButtonView deleteButton = SettingsUi.dialogButton(activity, "削除する");
+        deleteButton.setOnClickListener(view -> {
+            dialog.dismiss();
+            deleteItem(item);
+        });
+        dialog.addButton(deleteButton);
+        ButtonView cancelButton = SettingsUi.dialogButton(activity, "キャンセル");
+        cancelButton.setOnClickListener(view -> dialog.dismiss());
+        dialog.addButton(cancelButton);
+        dialog.show();
+    }
+
+    /**
+     * jp24.13.24.7: deletes one enumerated item. The scope guard
+     * ({@link SavedMediaSaf#canDelete}) runs first: the item must be
+     * in the current enumerated set, and a SAF item's tree must be
+     * one of the trees this load enumerated. SAF items are deleted
+     * through DocumentsContract.deleteDocument on their document Uri;
+     * MediaStore/index items through the content resolver on their
+     * row Uri. Directories are never items, so they are never
+     * deleted. On success the item leaves every tab at once; on any
+     * failure a toast explains and the item stays.
+     */
+    private void deleteItem(MediaItem item) {
+        Activity activity = getActivity();
+        if (activity == null || destroyed || lastResult == null) return;
+        Context appContext = activity.getApplicationContext();
+        final Context context = appContext != null ? appContext : activity;
+        final LoadResult result = lastResult;
+        new Thread(() -> {
+            boolean deleted = false;
+            try {
+                ContentResolver resolver = context.getContentResolver();
+                java.util.Set<String> enumerated = new java.util.HashSet<>();
+                for (MediaItem entry : result.items) {
+                    enumerated.add(entry.uri.toString());
+                }
+                boolean allowed = SavedMediaSaf.canDelete(
+                        item.saf,
+                        item.uri.toString(),
+                        item.tree == null ? null : item.tree.toString(),
+                        enumerated,
+                        result.safTrees);
+                if (!allowed) {
+                    Log.w("SavedMedia", "delete refused (out of scope): " + item.uri);
+                } else if (item.saf) {
+                    deleted = DocumentsContract.deleteDocument(resolver, item.uri);
+                } else {
+                    deleted = resolver.delete(item.uri, null, null) > 0;
+                }
+            } catch (Throwable t) {
+                Log.e("SavedMedia", "delete failed: " + item.uri, t);
+                deleted = false;
+            }
+            boolean success = deleted;
+            Activity current = getActivity();
+            if (current == null || destroyed) return;
+            current.runOnUiThread(() -> {
+                if (destroyed) return;
+                if (success) {
+                    result.items.remove(item);
+                    synchronized (thumbCache) {
+                        thumbCache.remove(item.uri.toString());
+                    }
+                    Toast.makeText(current, "削除しました", Toast.LENGTH_SHORT).show();
+                    renderMedia(result);
+                } else {
+                    Toast.makeText(current, "削除できませんでした", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }).start();
     }
 
     private static GridLayout.LayoutParams cellParams(Context context, int cell) {
@@ -1059,18 +1261,148 @@ public final class SavedMediaFragment extends CustomScreenFragment {
     private void openVideo(MediaItem item) {
         Activity activity = getActivity();
         if (activity == null) return;
+
+        // jp24.13.24.7.3: the framework MediaController is replaced with an
+        // in-layout controller. Anchored into the dialog's body container,
+        // the stock controller rendered the whole control block shifted
+        // right of the video and its seek thumb off the track's start
+        // (device report, 2026-11-21); its fixed layout also pins the
+        // current/total times to the seek row's ends, while the user wants
+        // one centered readout. The custom controller is an ordinary
+        // vertical layout under the video, so it follows the same layout
+        // pass as the rest of the dialog and cannot drift: transport
+        // buttons centered, one centered "current / total" label, and a
+        // full-width SeekBar whose thumb tracks the position through the
+        // standard SeekBar padding. Behavior kept from the stock
+        // controller: play/pause, seek by dragging, prev/next jumps,
+        // position updates while playing, stop on dialog dismiss. The
+        // stock controller's tap-to-show / auto-hide is not reproduced;
+        // the controls stay visible while the dialog is open.
+        LinearLayout root = new LinearLayout(activity);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setLayoutParams(new ViewGroup.LayoutParams(-1, -2));
+
         VideoView video = new VideoView(activity);
-        video.setLayoutParams(new ViewGroup.LayoutParams(-1, dpToPx(activity, 240f)));
-        MediaController controller = new MediaController(activity);
-        controller.setAnchorView(video);
-        video.setMediaController(controller);
+        video.setLayoutParams(new LinearLayout.LayoutParams(-1, dpToPx(activity, 240f)));
+        root.addView(video);
+
+        LinearLayout buttons = new LinearLayout(activity);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.CENTER);
+        buttons.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        TextView prevButton = playerButton(activity, "⏮");
+        TextView playButton = playerButton(activity, "⏸");
+        TextView nextButton = playerButton(activity, "⏭");
+        buttons.addView(prevButton);
+        buttons.addView(playButton);
+        buttons.addView(nextButton);
+        root.addView(buttons);
+
+        TextView timeLabel = new TextView(activity);
+        timeLabel.setGravity(Gravity.CENTER);
+        timeLabel.setText("00:00 / 00:00");
+        timeLabel.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        root.addView(timeLabel);
+
+        SeekBar seekBar = new SeekBar(activity);
+        seekBar.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        root.addView(seekBar);
+
+        Handler handler = new Handler(Looper.getMainLooper());
+        boolean[] seeking = {false};
+        Runnable[] ticker = new Runnable[1];
+        ticker[0] = () -> {
+            int duration = video.getDuration();
+            int position = video.getCurrentPosition();
+            if (duration > 0) {
+                seekBar.setMax(duration);
+                if (!seeking[0]) seekBar.setProgress(position);
+                timeLabel.setText(formatPlayerTime(position)
+                        + " / " + formatPlayerTime(duration));
+            }
+            playButton.setText(video.isPlaying() ? "⏸" : "▶");
+            handler.postDelayed(ticker[0], 500);
+        };
+
+        prevButton.setOnClickListener(view -> video.seekTo(0));
+        nextButton.setOnClickListener(view -> {
+            int duration = video.getDuration();
+            if (duration > 0) video.seekTo(duration);
+        });
+        playButton.setOnClickListener(view -> {
+            if (video.isPlaying()) {
+                video.pause();
+                playButton.setText("▶");
+            } else {
+                video.start();
+                playButton.setText("⏸");
+            }
+        });
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    int duration = video.getDuration();
+                    timeLabel.setText(formatPlayerTime(progress) + " / "
+                            + formatPlayerTime(Math.max(duration, 0)));
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+                seeking[0] = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                seeking[0] = false;
+                video.seekTo(bar.getProgress());
+            }
+        });
+        video.setOnCompletionListener(player -> {
+            playButton.setText("▶");
+            int duration = video.getDuration();
+            if (duration > 0) {
+                seekBar.setProgress(duration);
+                timeLabel.setText(formatPlayerTime(duration)
+                        + " / " + formatPlayerTime(duration));
+            }
+        });
+
         video.setVideoURI(item.uri);
         DialogView dialog = new DialogView(activity)
                 .setTitle(item.name)
-                .setBodyView(video);
-        dialog.getDialog().setOnDismissListener(ignored -> video.stopPlayback());
+                .setBodyView(root);
+        dialog.getDialog().setOnDismissListener(ignored -> {
+            handler.removeCallbacks(ticker[0]);
+            video.stopPlayback();
+        });
         dialog.show();
         video.start();
+        handler.post(ticker[0]);
+    }
+
+    private TextView playerButton(Activity activity, String glyph) {
+        TextView button = new TextView(activity);
+        button.setText(glyph);
+        button.setTextSize(24f);
+        button.setGravity(Gravity.CENTER);
+        int pad = dpToPx(activity, 12f);
+        button.setPadding(pad, pad / 2, pad, pad / 2);
+        button.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+        return button;
+    }
+
+    private static String formatPlayerTime(int millis) {
+        if (millis < 0) millis = 0;
+        int totalSeconds = millis / 1000;
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format(java.util.Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds);
+        }
+        return String.format(java.util.Locale.ROOT, "%02d:%02d", minutes, seconds);
     }
 
     // ---- Helpers ----

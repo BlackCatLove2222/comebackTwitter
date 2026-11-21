@@ -70,7 +70,7 @@ jp24 のゾンビフィルター（[../SPEC.md](../SPEC.md) §18）の評価器�
 
 ダウンロードの保存先デフォルト（[../SPEC.md](../SPEC.md) §20、[../BUILD.md](../BUILD.md) B20）の実物です。配置先は **classes21.dex**、`Lapp/morphe/extension/newx/misc/` 配下。
 
-- **JpMediaStoreDestination.java**: MediaStore コレクション（画像=Pictures/Twitter、動画=Movies/Twitter）への宛先バックエンド。crimera ダウンロードエンジンの `DestinationWriter` 実装で、IS_PENDING で insert → 転送 → complete() で公開する
+- **JpMediaStoreDestination.java**: MediaStore コレクション（画像=Pictures/Twitter、動画=Movies/Twitter）への宛先バックエンド。crimera ダウンロードエンジンの `DestinationWriter` 実装で、IS_PENDING で insert → 転送 → complete() で公開する。jp24.13.24.7.2 で、競合照会が外れた場合にダウンロードインデックスへフォールバックする `findIndexedItem` を追加（§59、B61。出荷は smali スプライスで、本ファイルは同内容のミラー）。jp24.13.24.7.3 でその分岐の反転を修正し、分岐アサーションを常設化した（§60、B62）
 - **JpRoutingDestination.java**: 宛先 Uri が MediaStore コレクションなら MediaStore 側、それ以外は従来の SAF 側へ振り分けるルーター
 - **DownloadSnippets.smali**: NewXDownloadFolders の追加メソッド（defaultTreeUri / effectiveTreeUri 2種）と、InlineDownloadButton 側の外科編集2点（needsFolderPrompt 本体差し替え、enqueueDownload の呼び出し差し替え）の抜粋。⚠ InlineDownloadButton 本体にはパッチ注入ブリッジがあるため丸ごと差し替え厳禁 — jp24.3 で実際にボタンを消した事故と対策（ブリッジ走査）は B20 と [../CHANGELOG.md](../CHANGELOG.md) の jp24.5 項を参照
 
@@ -141,14 +141,16 @@ jp24.13.17 で設定画面の ID エディタ（[../SPEC.md](../SPEC.md) §41、
 
 ダウンロード済みメディアの認証付きビューア（[../SPEC.md](../SPEC.md) §46、[../BUILD.md](../BUILD.md) B48）の拡張側クラス群の全文。配置先は **classes21.dex**、`misc/` 配下。
 
-- **SavedMediaFragment.java**: 画面本体。開くたびにフレームワークの生体認証（実在する `BiometricPrompt.Builder` 経由。jp24.13.22.2 で AndroidX 形状の誤用を修正 — §48、B50）が必須で、認証前にサムネイル・一覧は一切描きません。生体認証も画面ロックも無い端末では開きません（fail-closed）。列挙は jp24.13.23 で3段の MediaStore 照会に段階化（§49、B51）、jp24.13.24 で **SAF 主軸**（§50、B52）になりました: SAF → MediaStore 段階列挙 → 拡張インデックスの順にマージし、重複排除は URI 一致＋ (表示名, サイズ) キーの先勝ちです。ビューア経路からメディアスキャンは誘発せず、SAF ファイルの MediaStore 行も作りません（`.nomedia` の隠蔽効果を維持するため）
-- **SavedMediaStore.java**: ダウンロード完了時に (Uri, ファイル名, MIME) を記録する拡張側インデックス（MediaStore に行が無いファイルの補完）
-- **SavedMediaSaf.java**: `DocumentsContract` の子カーソルによるツリー列挙（再帰深さ4まで、ドットファイル・0バイト・未知 MIME を除外、ツリーごとに失敗を隔離）と重複排除キーのユーティリティ
+- **SavedMediaFragment.java**: 画面本体。開くたびにフレームワークの生体認証（実在する `BiometricPrompt.Builder` 経由。jp24.13.22.2 で AndroidX 形状の誤用を修正 — §48、B50）が必須で、認証前にサムネイル・一覧は一切描きません。生体認証も画面ロックも無い端末では開きません（fail-closed）。列挙は jp24.13.23 で3段の MediaStore 照会に段階化（§49、B51）、jp24.13.24 で **SAF 主軸**（§50、B52）になりました: SAF → MediaStore 段階列挙 → 拡張インデックスの順にマージし、重複排除は URI 一致＋ (表示名, サイズ) キーの先勝ちです。ビューア経路からメディアスキャンは誘発せず、SAF ファイルの MediaStore 行も作りません（`.nomedia` の隠蔽効果を維持するため）。jp24.13.24.7 で **画像／動画／GIF タブ（件数つき）と長押し削除**（§57、B59）を追加し、jp24.13.24.7.2 でインデックス剪定を修理（行プローブ失敗だけでは消さず、SAF 列挙で実在すれば保持 — §59、B61）、jp24.13.24.7.3 で動画プレビューを `MediaController` から**自前コントローラ**（ボタン・時刻表示とも中央、シークバーはフル幅）に置き換えました（§60、B62）
+- **SavedMediaStore.java**: ダウンロード完了時に (Uri, ファイル名, MIME) を記録する拡張側インデックス（MediaStore に行が無いファイルの補完）。jp24.13.24.7.2 で名前＋MIME 種別の照合（`findNamed` / `hasNamed`）を追加し、重複検出の存在オラクルも兼ねるようになりました（§59、B61）
+- **SavedMediaSaf.java**: `DocumentsContract` の子カーソルによるツリー列挙（再帰深さ4まで、ドットファイル・0バイト・未知 MIME を除外、ツリーごとに失敗を隔離）と重複排除キーのユーティリティ。jp24.13.24.7 でタブ分類（`tabFor`。GIF は GIF タブのみ）と削除スコープガード（`canDelete`）を追加（§57、B59）
 - **SavedMediaFolders.java / SavedMediaSettings.java**: ビューア専用のフォルダ許可（`newx.content.saved_media.*`）の保存層と状態判定（未許可／失効／正常）。ダウンロード先フォルダの許可は読み取り再利用します。jp24.13.24.3（§53、B55）で、保存呼び出しが実在する基底クラス API の形であることを連携ゲートで担保しています
 
 ## ConflictResolver.java — jp24.13.22 重複時のダウンロード前確認
 
 同名ファイルの重複時確認（[../SPEC.md](../SPEC.md) §46、[../BUILD.md](../BUILD.md) B48）の全文。配置先は **classes21.dex**、`misc/` 配下。設定トグル（既定 ON）→ 存在チェック（MediaStore 照会／SAF 子ドキュメント列挙、例外時は「なし」扱い）→ Activity があればダイアログ（上書き／別名で保存／キャンセル、外側タップと dismiss はキャンセル扱い、ラッチ待ち上限つき）、無ければ設定ポリシーで続行、という解決役です。両ダウンロードファネルへの組み込み（enqueue 直前の挿入とリクエストの作り替え）は同梱しません — 手順は B48 を参照
+
+jp24.13.24.7 で **DL 確認バイパス**（設定 ON なら存在時に無言で別名保存。§57、B59）、jp24.13.24.7.1 で **Activity 探索の再試行**（最大41回・50ms 間隔＋ホスト終了時の再表示。§58、B60）、jp24.13.24.7.2 で **存在チェックへのダウンロードインデックス併用**（`.nomedia` フォルダで MediaStore 照会が盲目なため。§59、B61）に対応済みで、同梱の本ファイルは全対応後の状態です
 
 ## FolderPicker.java / FolderPickerActivity.java — jp24.13.24.1 / jp24.13.24.3 フォルダ許可の永続化
 

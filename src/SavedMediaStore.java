@@ -16,9 +16,15 @@ import java.util.List;
  *
  * <p>{@link JpMediaStoreDestination#complete} records every published item
  * here so the authenticated saved-media viewer can enumerate downloads even
- * when the containing folder carries a .nomedia file (MediaStore owner
- * queries already bypass .nomedia; this index is the structural backstop).
- * The viewer prunes dead entries through {@link #replaceAll}.
+ * when the containing folder carries a .nomedia file. jp24.13.24.7.2:
+ * device evidence (the jp24.13.23 staged queries and the 24.7
+ * duplicate-download dialog defect) shows MediaStore queries return no
+ * rows for the .nomedia image folder on the user's device even for items
+ * this destination itself published, while Movies/Twitter rows stay
+ * queryable — so this index is also the existence record the download
+ * conflict path ({@code ConflictResolver}, {@code JpMediaStoreDestination})
+ * consults for the built-in folders. The viewer prunes dead entries
+ * through {@link #replaceAll}.
  *
  * <p>Storage: SharedPreferences {@code "newx_saved_media_index"}, key
  * {@code "entries_v1"} holding a JSONArray string of objects
@@ -76,6 +82,33 @@ public final class SavedMediaStore {
         } catch (Throwable ignored) {
             return new ArrayList<>();
         }
+    }
+
+    // ---- Existence lookup (jp24.13.24.7.2) ----
+
+    /**
+     * First entry (the list is newest first) whose recorded name equals
+     * {@code name} and whose MIME kind matches {@code video}: video
+     * entries carry a {@code video/} MIME type, image entries an
+     * {@code image/} one. Entries without a usable MIME type never match
+     * (fail closed, mirroring the download router's media-kind routing).
+     * Android-free; exercised by the JVM harness.
+     */
+    static Entry findNamed(List<Entry> entries, String name, boolean video) {
+        if (entries == null || name == null) return null;
+        for (Entry entry : entries) {
+            if (entry == null || entry.name == null || entry.mime == null) continue;
+            if (video ? !entry.mime.startsWith("video/") : !entry.mime.startsWith("image/")) {
+                continue;
+            }
+            if (name.equals(entry.name)) return entry;
+        }
+        return null;
+    }
+
+    /** True when {@link #findNamed} finds an entry. Android-free. */
+    static boolean hasNamed(List<Entry> entries, String name, boolean video) {
+        return findNamed(entries, name, video) != null;
     }
 
     /** Replaces the whole index (the viewer uses this to prune dead entries). */

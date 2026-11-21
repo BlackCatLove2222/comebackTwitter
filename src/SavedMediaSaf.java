@@ -1,8 +1,10 @@
 package app.morphe.extension.newx.misc;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * jp24.13.24: Android-free helpers for the saved-media viewer's SAF
@@ -19,7 +21,60 @@ final class SavedMediaSaf {
 
     static final String MIME_DIRECTORY = "vnd.android.document/directory";
 
+    // jp24.13.24.7: viewer tabs.
+    static final int TAB_IMAGE = 0;
+    static final int TAB_VIDEO = 1;
+    static final int TAB_GIF = 2;
+
     private SavedMediaSaf() {
+    }
+
+    /**
+     * jp24.13.24.7: a GIF is identified by its mime type or, when the
+     * mime is missing/generic, by a .gif file name (case-insensitive).
+     */
+    static boolean isGif(String mime, String name) {
+        if (mime != null && mime.equalsIgnoreCase("image/gif")) return true;
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".gif");
+    }
+
+    /**
+     * jp24.13.24.7: which viewer tab an enumerated item belongs to.
+     * GIFs go to the GIF tab only (never the image tab). Other images
+     * go to the image tab and videos to the video tab; the mime type
+     * decides first and the source-kind flag breaks ties for items
+     * whose mime is unknown (every enumerated item carries a definite
+     * kind from its source, so the classification is total).
+     */
+    static int tabFor(String mime, String name, boolean video) {
+        if (isGif(mime, name)) return TAB_GIF;
+        if (mime != null && mime.startsWith("video/")) return TAB_VIDEO;
+        if (mime != null && mime.startsWith("image/")) return TAB_IMAGE;
+        return video ? TAB_VIDEO : TAB_IMAGE;
+    }
+
+    /**
+     * jp24.13.24.7: delete scope guard. An item may be deleted only
+     * when it is part of the viewer's current enumerated set; a SAF
+     * item additionally requires the tree it was enumerated from to
+     * be one of the trees granted to (and enumerated by) this viewer
+     * load. Nothing outside the enumerated folders is reachable:
+     * MediaStore/index items in the set come only from the two fixed
+     * folder queries and the extension's own download index.
+     */
+    static boolean canDelete(
+            boolean saf,
+            String itemUri,
+            String treeUri,
+            Collection<String> enumeratedUris,
+            Collection<String> grantedTreeUris) {
+        if (itemUri == null || enumeratedUris == null
+                || !enumeratedUris.contains(itemUri)) {
+            return false;
+        }
+        if (!saf) return true;
+        return treeUri != null && grantedTreeUris != null
+                && grantedTreeUris.contains(treeUri);
     }
 
     /** Dotfiles (including .nomedia itself) never become media items. */

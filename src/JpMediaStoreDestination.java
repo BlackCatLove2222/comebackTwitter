@@ -72,6 +72,11 @@ public final class JpMediaStoreDestination implements DestinationWriter {
         for (int attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
             String candidate = attempt == 0 ? name : SafDestination.appendSuffix(name, attempt);
             Uri existing = findItem(resolver, collection, relativePath, candidate);
+            if (existing == null) {
+                // jp24.13.24.7.2: the MediaStore query is blind for the
+                // .nomedia image folder; consult the download index.
+                existing = findIndexedItem(context, collection, relativePath, candidate);
+            }
             if (existing != null) {
                 if (policy == ConflictPolicy.SKIP) return null;
                 if (policy == ConflictPolicy.RENAME) continue;
@@ -112,6 +117,10 @@ public final class JpMediaStoreDestination implements DestinationWriter {
         } catch (RuntimeException exception) {
             NewXLogger.printException(() -> "Failed to publish the downloaded media item", exception);
         }
+        // jp24.13.22 (B): index the published item for the authenticated
+        // saved-media viewer. After the publish try/catch and itself
+        // fail-soft, so indexing can never affect publishing.
+        SavedMediaStore.record(context, uri, reservation.fileName(), reservation.mimeType());
     }
 
     private static Uri findItem(ContentResolver resolver, Uri collection, String relativePath, String name) {
@@ -130,6 +139,37 @@ public final class JpMediaStoreDestination implements DestinationWriter {
             NewXLogger.printException(() -> "MediaStore lookup failed for " + name, exception);
         }
         return null;
+    }
+
+    /**
+     * jp24.13.24.7.2: when the MediaStore query cannot see the item —
+     * on the user's device it returns no rows for the .nomedia image
+     * folder, even for items this destination itself published — fall
+     * back to the extension's own download index ({@link SavedMediaStore}),
+     * which records every published item. Without this, reserve() could
+     * not apply SKIP / OVERWRITE / RENAME for repeat image saves at all:
+     * every repeat silently inserted a provider-suffixed copy. Base
+     * folder only (the index records base-folder publishes; subpath
+     * requests keep the query-only behavior). Fail-soft.
+     *
+     * <p>Note: in the shipped build this fallback is applied as a smali
+     * splice (a new method on the shipped class plus a call in the
+     * shipped reserve loop; the class is not recompiled, per the
+     * DownloadSettings precedent); this source mirrors it.
+     */
+    private static Uri findIndexedItem(
+            Context context, Uri collection, String relativePath, String name) {
+        try {
+            if (context == null) return null;
+            boolean video = collection.getPath() != null && collection.getPath().contains("/video/");
+            if (!relativePathFor(video, null).equals(relativePath)) return null;
+            SavedMediaStore.Entry entry =
+                    SavedMediaStore.findNamed(SavedMediaStore.entries(context), name, video);
+            if (entry == null || entry.uri == null || entry.uri.isEmpty()) return null;
+            return Uri.parse(entry.uri);
+        } catch (Throwable throwable) {
+            return null;
+        }
     }
 
     private static Uri insertPending(ContentResolver resolver, Uri collection, String relativePath,
