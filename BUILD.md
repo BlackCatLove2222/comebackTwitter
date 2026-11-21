@@ -553,6 +553,7 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 - **リソース名ゲート（jp24.13.22.1 で新設、必須）**: 設定項目の登録・追加を触ったら、最終 APK に対して `resname_check`（登録引数・リソース取得 API・`getIdentifier` の参照を arsc の実在名と照合。リソース名位置の非 ASCII リテラルは無条件 FAIL）を実行し、不合格ゼロを確認する。表示文言とリソース名を取り違えた jp24.13.22 の起動不能事故を受けた必須工程
 - **連携ゲート（jp24.13.24.3 で新設、必須）**: 拡張コードが発行する全メソッド／フィールド参照について、参照先シグネチャが出荷 dex 群＋フレームワーク表面に実在することを照合する（`linkage_check`）。コンパイル用スタブやハーネスのフェイクは出荷形状に合わせ、存在しない API 表面を提供しない。jp24.13.22.2（フレームワーク API）と jp24.13.24.3（設定保存 API）の2度の「コンパイルが通るが実機に無いメソッド」事故を受けた必須工程で、旧ビルドに対して実機バグだけを正確に検出することを確認済み
 - **アライメントゲート（jp24.13.24.2 で新設、再梱包時に必須）**: 最終署名 APK で STORED .so 全件のデータ開始位置が 4096 の倍数であることを実測する（B54）。署名は配置をずらし得るため、署名後の実物で測ること
+- **分岐アサーション（jp24.13.24.7.3 で新設、smali スプライスを含むビルドで必須）**: smali スプライスで条件分岐を含むコードを組み込んだら、最終 dex の逆アセンブルに対して、分岐先とフォールスルーで得られる値・経路の意味論を静的にアサートする。Java ミラー（ソース）が正しくてもスプライス側で分岐が反転し得て、JVM ハーネスはミラーをモデル化するため検出できない（jp24.13.24.7.2 で実際に、フォルダ選択の分岐反転がインデックス照合を常時不一致にしていた）。検査は壊れた前版に対して正しく不合格になること（ネガティブコントロール）を確認してから使う
 
 ### B56. フィルターバンドルのリクエストコード移行（jp24.13.24.4、classes21）
 `FilterBundleImportExport` のファイル入出力リクエストコード定数を、取り込み 0x5042 → **0x5071**、書き出し 0x5052 → **0x5072** に変更する（上流 SettingsBackupRestore との衝突回避。コード空間の全数確認: BackupRestore 0x5042/0x5052、FeatureSwitch 0x5046/0x5056、UpdateFont 0x5061/0x5062、本バンドル 0x5071/0x5072）。src/FilterBundleImportExport.java は移行後の状態。
@@ -563,6 +564,27 @@ goto の**直前**に、退避コピーが作るはずだった値を**原本と
 ### B58. ドロワー項目フィルターと ResourceUtils のキャッシュ化（jp24.13.24.6、classes20 / classes21）
 - classes21: `app/morphe/extension/newx/misc/DrawerItemFilter` を src/DrawerItemFilter.java の内容に差し替える（非表示オプション → 解決済みタイトル集合の static キャッシュ。キー = 集合のコピー＋先頭ロケールの言語タグ。二重チェックロック。項目単位の失敗隔離は維持）。
 - classes20: `app/morphe/extension/shared/ResourceUtils` は Java ソースが存在しないため smali を直接編集する。`getIdentifier(Context, ResourceType, String)`（getStringOrThrow の中央経路）に static ConcurrentHashMap キャッシュを追加する。キー = 型文字列 + ":" + 名前。成功結果のみ保存し、例外経路は従来どおり handleException を経て 0 を返しキャッシュに入れない。`<clinit>` でマップを初期化する static フィールドを追加する（他の static 初期値は従来どおり）。getSystemIdentifier（android パッケージ側）は対象外。
+
+### B59. DL 確認バイパス設定とビューアのタブ／削除（jp24.13.24.7、classes19 / classes21 / resources.arsc）
+[SPEC.md](SPEC.md) §57 の実装:
+1. **バイパス設定（classes19 / resources.arsc）**: 設定キー `newx.content.inline_download_skip_conflict_confirmation`（boolean、既定 OFF）を、B48 の確認トグル（`newx.content.inline_download_ask_on_conflict`）と同じグループ `newx.post_actions_media.inline_download` の直後に登録する。文字列リソース `piko_newx_inline_download_skip_conflict_confirmation_title`（EN "Download without confirmation" / JA「DLの確認をせずそのままダウンロード」）と `piko_newx_inline_download_skip_conflict_confirmation_summary`（EN "When a file with the same name already exists, save the download under a new name without asking" / JA「同じ名前のファイルが既にあるとき、確認せずに別名で保存します」）を arsc に追加する（既存エントリのバイトを変えない正規のテーブル成長手順で。B49 のリソース名規則に従い、登録後に resname_check を必ず通す）。読取アクセサ `DownloadSettings.skipConflictConfirmation()` は、コード生成形状が異なるため**再コンパイルせず smali スプライス**で追加する（DownloadSettings は B61 の JpMediaStoreDestination と同じ先例に従う）
+2. **バイパス分岐（classes21）**: `ConflictResolver.resolve()` の冒頭でバイパスを判定する。ON かつ同名ファイルが存在すれば RENAME を即返し（宛先側が連番を付ける）、それ以外は従来経路（確認トグル→存在チェック→プロンプト）。src/ConflictResolver.java は適用後の状態
+3. **ビューアのタブ／削除（classes21）**: `SavedMediaFragment` にタブ帯（画像／動画／GIF＋件数、切替は再スキャンなし）と、セル長押し→確認ダイアログ→削除（SAF は `DocumentsContract.deleteDocument`、MediaStore 由来は ContentResolver.delete）を追加する。分類（`tabFor`）と削除可否のスコープガード（`canDelete`: 列挙済み URI のみ、SAF は列挙元ツリーが許可済みであること）は純粋判定として `SavedMediaSaf` に置く。src/SavedMediaFragment.java / src/SavedMediaSaf.java は適用後の状態
+
+### B60. 重複ダイアログの Activity プローブ再試行（jp24.13.24.7.1、classes21）
+[SPEC.md](SPEC.md) §58 の実装。`ConflictResolver` のプロンプト経路を、単発探索から「探索を最大41回・50ms 間隔で再試行（初回は即時）→ プロンプトは最大2ラウンド（表示中にホストが finish / destroy された場合のみ後継 Activity で再表示）」に変える。生きているホストでの dismiss / タイムアウトは従来どおりキャンセル（SKIP）。最終フォールバック（設定ポリシー）は温存し、到達時に追跡 Activity の状態をログへ出す。src/ConflictResolver.java は適用後の状態
+
+### B61. 重複検出へのダウンロードインデックス併用（jp24.13.24.7.2、classes21）
+[SPEC.md](SPEC.md) §59 の実装:
+1. `SavedMediaStore` に名前＋MIME 種別の照合（`findNamed` / `hasNamed`。MIME なしエントリは決して一致しない fail-closed、最新順）を追加する。src/SavedMediaStore.java は適用後の状態
+2. `ConflictResolver.exists()` の内蔵フォルダ宛てを「MediaStore 照会 OR インデックス照会（`SavedMediaStore.hasNamed`、fail-soft）」に変える。SAF 宛ては不変。メディアスキャンの誘発・MediaStore 行の作成はしない
+3. `JpMediaStoreDestination` は**再コンパイルせず smali スプライス**する: `reserve()` の候補ループで MediaStore 照会が外れたとき、新規メソッド `findIndexedItem` にフォールバックする。相対パスが種別のベースフォルダ（画像 `Pictures/Twitter/` / 動画 `Movies/Twitter/`）と完全一致する場合のみインデックスを引き、命中時は記録 Uri を既存ファイルとして返す（SKIP＝真のスキップ、RENAME＝候補送り、OVERWRITE＝記録 Uri の削除→insert が働くようになる。サブパスは従来どおり照会のみ）。src/JpMediaStoreDestination.java は同内容のミラー
+4. `SavedMediaFragment` のインデックス剪定を修理する: 行プローブ失敗だけではエントリを消さず、SAF 列挙で同名・同種のファイルが実在する場合は保持する（照合キーは名前＋種別）
+
+### B62. 保存側の分岐修正と動画プレイヤーの自前化（jp24.13.24.7.3、classes21）
+[SPEC.md](SPEC.md) §60 の実装:
+1. **分岐修正（smali スプライス）**: B61 の `findIndexedItem` のベースフォルダ選択の分岐を正す — 動画コレクション（パスに `/video/` を含む）のとき `Movies/Twitter/`、それ以外のとき `Pictures/Twitter/` が選ばれる向きにする（24.7.2 の出荷スプライスはこれが反転していた）。スプライスを再生成する場合は修正済みテンプレートを使うこと。あわせて「検証の作法」の**分岐アサーション**（最終 dex の逆アセンブルに対する静的検査＋ネガティブコントロール）を必ず実施する
+2. **動画プレイヤー（Java 再コンパイル）**: `SavedMediaFragment.openVideo` の `MediaController`（`setAnchorView` のオーバーレイ配置）を廃し、ダイアログ本体と同じレイアウトに乗る自前コントローラに置き換える: 縦 LinearLayout = VideoView（240dp）／ボタン行（⏮ ▶⏸ ⏭、gravity CENTER）／時刻ラベル（中央、「00:00 / 00:01」形式）／SeekBar（フル幅、標準の対称つまみパディング）。Handler で 500ms ごとに進捗同期し、ドラッグ中はユーザー操作を優先、完了時は再生ボタンとつまみをリセット、ダイアログを閉じたら stopPlayback とコールバック除去を行う。src/SavedMediaFragment.java は適用後の状態
 
 ---
 
